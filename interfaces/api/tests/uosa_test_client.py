@@ -223,45 +223,53 @@ class UosaTestClient(TestClient):
             serialization.PublicFormat.SubjectPublicKeyInfo,
         )
         self._public_key_b64 = base64.b64encode(public_der).decode("ascii")
-        self._session_token: str | None = None
+        self._session_tokens: dict[str, str] = {}
+        self._device_enrolled = False
 
-    def _prepare_session(self) -> str:
+    def _prepare_session(self, scope_class: str) -> str:
         os.environ["AMIKI_UOSA_DB_PATH"] = str(self._db_path)
         os.environ["AMIKI_UOSA_SETUP_CODE_FILE"] = str(
             self._state_dir / "uosa-setup-code"
         )
-        if self._session_token is not None:
-            return self._session_token
+        cached = self._session_tokens.get(scope_class)
+        if cached is not None and uosa_security.get_session(cached) is not None:
+            return cached
 
-        setup = uosa_security.create_setup_code()
-        challenge = super().request(
-            "POST",
-            "/api/v1/security/setup/enrollment-challenges",
-            json={
-                "setup_code": setup["setup_code"],
-                "device_id": self._device_id,
-                "label": "pytest UOSA device",
-                "public_key": self._public_key_b64,
-            },
-        )
-        assert challenge.status_code == 200, challenge.text
-        enrolled = super().request(
-            "POST",
-            "/api/v1/security/setup/enroll",
-            json={
-                "challenge_id": challenge.json()["challenge_id"],
-                "signature": _sign(self._private_key, challenge.json()),
-            },
-        )
-        assert enrolled.status_code == 200, enrolled.text
+        if not self._device_enrolled:
+            setup = uosa_security.create_setup_code()
+            challenge = super().request(
+                "POST",
+                "/api/v1/security/setup/enrollment-challenges",
+                json={
+                    "setup_code": setup["setup_code"],
+                    "device_id": self._device_id,
+                    "label": "pytest UOSA device",
+                    "public_key": self._public_key_b64,
+                },
+            )
+            assert challenge.status_code == 200, challenge.text
+            enrolled = super().request(
+                "POST",
+                "/api/v1/security/setup/enroll",
+                json={
+                    "challenge_id": challenge.json()["challenge_id"],
+                    "signature": _sign(self._private_key, challenge.json()),
+                },
+            )
+            assert enrolled.status_code == 200, enrolled.text
+            self._device_enrolled = True
 
+        profile_scopes = sorted(
+            scope for scope in uosa_security.ALLOWED_SCOPES
+            if uosa_security.classify_scope_class([scope]) == scope_class
+        )
         session_challenge = super().request(
             "POST",
             "/api/v1/security/challenges",
             json={
                 "device_id": self._device_id,
                 "audience": uosa_security.OWNER_AUDIENCE,
-                "scopes": sorted(uosa_security.ALLOWED_SCOPES),
+                "scopes": profile_scopes,
             },
         )
         assert session_challenge.status_code == 200, session_challenge.text
@@ -274,8 +282,10 @@ class UosaTestClient(TestClient):
             },
         )
         assert issued.status_code == 200, issued.text
-        self._session_token = issued.json()["access_token"]
-        return self._session_token
+        token = issued.json()["access_token"]
+        self._session_tokens[scope_class] = token
+        return token
+
 
     def request(self, method, url, **kwargs):
         headers = dict(kwargs.get("headers") or {})
@@ -292,7 +302,8 @@ class UosaTestClient(TestClient):
                 query = f"{query}&{encoded}" if query else encoded
             request_path = parsed.path + (f"?{query}" if query else "")
             if scope is not None:
-                base_token = self._prepare_session()
+                scope_class = uosa_security.classify_scope_class([scope])
+                base_token = self._prepare_session(scope_class)
                 auth_level = uosa_security.SCOPE_AUTH_LEVEL[scope]
                 if (
                     parsed.path.endswith("/rotation-challenges")
