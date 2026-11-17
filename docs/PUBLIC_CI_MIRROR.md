@@ -19,3 +19,7 @@ The private repository remains authoritative. The public mirror is a reviewed so
 ## CI
 
 The workflow installs API dependencies, compiles application modules, and runs a focused API/security regression set. Expand the test matrix only after each added test's fixtures and dependencies have been reviewed.
+
+## Snapshot scope
+
+This initial snapshot includes the current backend runtime and API modules required for the focused CI workflow, plus three selected API/workspace regression tests. It intentionally does not copy the complete historical test corpus or local working/backup files. Expand the published test set only after reviewing each test for personal data, fixtures, and dependencies.
