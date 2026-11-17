@@ -1,8 +1,9 @@
 """Conversation lifecycle API backed by the isolated conversation store."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
+from interfaces.api.routes.security import require_uosa_scope
 from core.conversations.store import (
     ConversationAlreadyExistsError,
     ConversationNotFoundError,
@@ -29,7 +30,7 @@ class ConversationCreateRequest(BaseModel):
             raise ValueError("Conversation ID must be a canonical UUID v4.") from error
 
 
-@router.post("/conversations", status_code=201)
+@router.post("/conversations", status_code=201, dependencies=[Depends(require_uosa_scope("conversations.write"))])
 def create_conversation(request: ConversationCreateRequest):
     """Register a client-generated UUID v4 conversation."""
     try:
@@ -44,7 +45,7 @@ def create_conversation(request: ConversationCreateRequest):
         ) from None
 
 
-@router.get("/conversations")
+@router.get("/conversations", dependencies=[Depends(require_uosa_scope("conversations.read"))])
 def list_conversations(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -70,7 +71,7 @@ def _normalize_path_conversation_id(value: str) -> str:
         ) from None
 
 
-@router.get("/conversations/{conversation_id}")
+@router.get("/conversations/{conversation_id}", dependencies=[Depends(require_uosa_scope("conversations.read"))])
 def get_conversation(conversation_id: str):
     """Return one conversation's metadata."""
     try:
@@ -84,7 +85,7 @@ def get_conversation(conversation_id: str):
         ) from None
 
 
-@router.get("/conversations/{conversation_id}/messages")
+@router.get("/conversations/{conversation_id}/messages", dependencies=[Depends(require_uosa_scope("conversations.read"))])
 def get_conversation_messages(
     conversation_id: str,
     limit: int = Query(default=50, ge=1, le=100),

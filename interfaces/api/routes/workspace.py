@@ -8,10 +8,11 @@ from threading import Lock
 from time import monotonic
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, StrictBool
 
 from core.model import ask_model
+from interfaces.api.routes.security import require_uosa_scope
 
 from core.handlers.workspace import (
     inspect_workspace, read_workspace, write_workspace, create_workspace_file,
@@ -177,7 +178,7 @@ def _project_name(project_id: str) -> str:
     )
 
 
-@router.post("/workspace/projects")
+@router.post("/workspace/projects", dependencies=[Depends(require_uosa_scope("workspace.project.create"))])
 def create_workspace_project_endpoint(request: WorkspaceProjectCreateRequest):
     """Create a local starter project after explicit approval."""
     if request.approved is not True:
@@ -197,7 +198,7 @@ def create_workspace_project_endpoint(request: WorkspaceProjectCreateRequest):
     }
 
 
-@router.get("/workspace/projects")
+@router.get("/workspace/projects", dependencies=[Depends(require_uosa_scope("workspace.read"))])
 def workspace_projects():
     """Return the configured project list and whether each root exists on this device."""
     return {
@@ -207,7 +208,7 @@ def workspace_projects():
     }
 
 
-@router.get("/workspace/git")
+@router.get("/workspace/git", dependencies=[Depends(require_uosa_scope("workspace.read"))])
 def workspace_git_inspection(
     project_id: str = Query("workspace", min_length=1, max_length=40),
 ):
@@ -225,7 +226,7 @@ def workspace_git_inspection(
 
 
 
-@router.get("/workspace/git/diff")
+@router.get("/workspace/git/diff", dependencies=[Depends(require_uosa_scope("workspace.read"))])
 def workspace_git_diff(
     project_id: str = Query("workspace", min_length=1, max_length=40),
     staged: bool = Query(False),
@@ -243,7 +244,7 @@ def workspace_git_diff(
     }
 
 
-@router.get("/workspace/tree")
+@router.get("/workspace/tree", dependencies=[Depends(require_uosa_scope("workspace.read"))])
 def workspace_tree(
     path: str = Query(".", min_length=1, max_length=240),
     project_id: str = Query("workspace", min_length=1, max_length=40),
@@ -275,7 +276,7 @@ def workspace_tree(
     return response
 
 
-@router.get("/workspace/search")
+@router.get("/workspace/search", dependencies=[Depends(require_uosa_scope("workspace.read"))])
 def workspace_search(
     q: str = Query(..., min_length=1, max_length=200),
     path: str = Query(".", min_length=1, max_length=240),
@@ -354,7 +355,7 @@ def workspace_search(
     }
 
 
-@router.post("/workspace/change-proposals")
+@router.post("/workspace/change-proposals", dependencies=[Depends(require_uosa_scope("workspace.proposals.write"))])
 def create_workspace_change_proposal(request: WorkspaceChangeProposalRequest):
     """Capture a bounded proposed replacement without changing the selected project."""
     root = _get_project_root(request.project_id)
@@ -410,7 +411,7 @@ def create_workspace_change_proposal(request: WorkspaceChangeProposalRequest):
     }
 
 
-@router.post("/workspace/change-proposals/generate")
+@router.post("/workspace/change-proposals/generate", dependencies=[Depends(require_uosa_scope("workspace.proposals.write"))])
 def generate_workspace_change_proposal(request: WorkspaceGenerateChangeRequest):
     """Ask the configured model for one replacement, then stage it for human review."""
     root = _get_project_root(request.project_id)
@@ -465,7 +466,7 @@ def generate_workspace_change_proposal(request: WorkspaceGenerateChangeRequest):
     )
 
 
-@router.get("/workspace/change-proposals/{proposal_id}")
+@router.get("/workspace/change-proposals/{proposal_id}", dependencies=[Depends(require_uosa_scope("workspace.read"))])
 def get_workspace_change_proposal(
     proposal_id: str,
     project_id: str = Query("workspace", min_length=1, max_length=40),
@@ -496,7 +497,7 @@ def get_workspace_change_proposal(
     }
 
 
-@router.post("/workspace/change-proposals/{proposal_id}/approve")
+@router.post("/workspace/change-proposals/{proposal_id}/approve", dependencies=[Depends(require_uosa_scope("workspace.change.apply"))])
 def approve_workspace_change_proposal(
     proposal_id: str,
     request: WorkspaceChangeApprovalRequest,
@@ -621,7 +622,7 @@ def approve_workspace_change_proposal(
     }
 
 
-@router.post("/workspace/change-proposals/{proposal_id}/reject")
+@router.post("/workspace/change-proposals/{proposal_id}/reject", dependencies=[Depends(require_uosa_scope("workspace.proposals.write"))])
 def reject_workspace_change_proposal(
     proposal_id: str,
     request: WorkspaceChangeRejectRequest,
@@ -649,7 +650,7 @@ def reject_workspace_change_proposal(
     }
 
 
-@router.get("/workspace/file")
+@router.get("/workspace/file", dependencies=[Depends(require_uosa_scope("workspace.read"))])
 def workspace_file(
     path: str = Query(..., min_length=1, max_length=240),
     project_id: str = Query("workspace", min_length=1, max_length=40),
@@ -673,7 +674,7 @@ def workspace_file(
     }
 
 
-@router.post("/workspace/file")
+@router.post("/workspace/file", dependencies=[Depends(require_uosa_scope("workspace.file.write"))])
 def write_workspace_file(request: WorkspaceWriteRequest):
     """Write one bounded UTF-8 workspace file after explicit client approval."""
     if request.approved is not True:
@@ -703,7 +704,7 @@ def write_workspace_file(request: WorkspaceWriteRequest):
 
 
 
-@router.post("/workspace/new-file")
+@router.post("/workspace/new-file", dependencies=[Depends(require_uosa_scope("workspace.file.write"))])
 def create_workspace_file_endpoint(request: WorkspaceCreateFileRequest):
     """Create a new workspace file only after explicit client approval."""
     if request.approved is not True:
@@ -731,7 +732,7 @@ def create_workspace_file_endpoint(request: WorkspaceCreateFileRequest):
 
 
 
-@router.post("/workspace/command")
+@router.post("/workspace/command", dependencies=[Depends(require_uosa_scope("workspace.command.execute"))])
 def workspace_command(request: WorkspaceCommandRequest):
     """Run a small allowlisted command set without invoking a shell."""
     try:
@@ -862,7 +863,7 @@ def workspace_command(request: WorkspaceCommandRequest):
     )
 
 
-@router.post("/workspace/check")
+@router.post("/workspace/check", dependencies=[Depends(require_uosa_scope("workspace.read"))])
 def check_workspace_python_endpoint(request: WorkspaceCheckRequest):
     """Validate Python syntax without running the file."""
     root = _get_project_root(request.project_id)
@@ -888,7 +889,7 @@ def check_workspace_python_endpoint(request: WorkspaceCheckRequest):
     }
 
 
-@router.post("/workspace/execute")
+@router.post("/workspace/execute", dependencies=[Depends(require_uosa_scope("workspace.file.execute"))])
 def execute_workspace_script(request: WorkspaceExecuteRequest):
     """Run one Python file from the workspace after explicit user approval."""
     if request.approved is not True:

@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 import re
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.integrations.cipher_client import CipherClient, CipherIntegrationError
+from interfaces.api.routes.security import require_uosa_scope
 
 router = APIRouter(prefix="/cipher", tags=["cipher"])
 
@@ -69,7 +70,7 @@ def _upstream_error(exc: CipherIntegrationError) -> HTTPException:
     )
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_uosa_scope("cipher.inspect"))])
 def cipher_status() -> dict:
     """Return verified Cipher liveness and audit-chain metadata, never a security verdict."""
     client = _client()
@@ -104,7 +105,7 @@ def cipher_status() -> dict:
     }
 
 
-@router.post("/inspect")
+@router.post("/inspect", dependencies=[Depends(require_uosa_scope("cipher.inspect"))])
 def cipher_inspect(request: CipherInspectRequest) -> dict:
     """Request bounded inspection of a Cipher-registered root by identifier only."""
     client = _client()

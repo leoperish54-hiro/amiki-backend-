@@ -1,14 +1,16 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from core.system_state import SystemState
 from core.awareness import build_awareness_snapshot
 from core.runtime_awareness import get_runtime_awareness
 from interfaces.api.schemas.system_state import SystemStateResponse
 
+from interfaces.api.routes.security import require_uosa_scope
+
 router = APIRouter()
 
 
-@router.get("/system-state", response_model=SystemStateResponse)
+@router.get("/system-state", response_model=SystemStateResponse, dependencies=[Depends(require_uosa_scope("device.read"))])
 def system_state_endpoint():
     state = SystemState.from_runtime()
     runtime_awareness = get_runtime_awareness()

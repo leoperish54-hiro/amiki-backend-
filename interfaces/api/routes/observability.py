@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.observability import (
@@ -11,6 +11,7 @@ from core.observability import (
     get_observability,
 )
 
+from interfaces.api.routes.security import require_uosa_scope
 
 router = APIRouter()
 
@@ -34,7 +35,7 @@ class SentinelEventBatch(BaseModel):
     events: list[dict[str, Any]]
 
 
-@router.get("/observability/events")
+@router.get("/observability/events", dependencies=[Depends(require_uosa_scope("observability.read"))])
 def observability_events(
     limit: int = Query(100, ge=1, le=500),
 ):
@@ -48,7 +49,7 @@ def observability_events(
     }
 
 
-@router.get("/observability/diagnostics")
+@router.get("/observability/diagnostics", dependencies=[Depends(require_uosa_scope("observability.read"))])
 def observability_diagnostics(
     limit: int = Query(100, ge=1, le=500),
 ):
@@ -60,7 +61,7 @@ def observability_diagnostics(
     }
 
 
-@router.get("/observability/diagnostics/{failure_signature}")
+@router.get("/observability/diagnostics/{failure_signature}", dependencies=[Depends(require_uosa_scope("observability.read"))])
 def observability_diagnostic_detail(failure_signature: str):
     """Return one bounded permanent diagnostic record by stable signature."""
     bus = get_observability()
@@ -73,7 +74,7 @@ def observability_diagnostic_detail(failure_signature: str):
     }
 
 
-@router.get("/observability/status")
+@router.get("/observability/status", dependencies=[Depends(require_uosa_scope("observability.read"))])
 def observability_status():
     """Return safe observability store status."""
     bus = get_observability()

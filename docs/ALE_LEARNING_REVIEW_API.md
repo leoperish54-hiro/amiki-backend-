@@ -1,57 +1,49 @@
 # ALE Learning Review API
 
 The Learning Review API exposes pending learning candidates to the owner and
-provides explicit approval/rejection controls. It is separate from research
-ingestion: research results remain pending and are never promoted automatically.
+provides explicit approval/rejection controls. Research results remain pending
+until the owner reviews their content, sources, and evidence.
 
-## Security model
+## Authorization
 
-All review endpoints require an owner bearer token supplied through the
-`AMIKI_OWNER_REVIEW_TOKEN` environment variable.
+All owner-protected ALE routes use **UOSA**, not the retired
+`AMIKI_OWNER_REVIEW_TOKEN` bearer.
 
-- The token must be at least 32 characters.
-- The API reads the token at request time; it is not written to `config.json`.
-- Missing or weak configuration disables review operations with HTTP 503.
-- Missing or incorrect authorization returns HTTP 401.
-- Comparisons use constant-time `secrets.compare_digest`.
-- Never commit the token, put it in application logs, or expose it to the Android
-  client as a hard-coded value.
-- Use HTTPS whenever review endpoints are reachable beyond a trusted local device.
-- This token protects the review endpoints only; it does not authenticate the
-  rest of the existing API.
+- L1 sessions are short-lived (15 minutes), bound to one enrolled device
+  generation, audience-limited to `amiki-core`, and limited to explicitly
+  requested scopes.
+- Review-queue reads require `ale.review.read` (L1).
+- Approve and reject operations require `ale.review.approve` or
+  `ale.review.reject` (L2).
+- L2 authorization is issued only after a fresh device-key signature and is
+  valid for one request, one scope, and the exact HTTP method, path, query, and
+  canonical JSON body. Its lifetime is two minutes.
+- Replaying the grant, changing the record ID, or changing the request body
+  invalidates the authorization.
+- The Android device performs biometric verification locally and signs the
+  server challenge with its enrolled P-256 key. Fingerprint templates, face
+  data, and biometric sensor data are never sent to the backend.
 
-Generate a token locally with a cryptographically secure generator, for example:
+The old owner-review bearer no longer authorizes ALE routes. It must not be
+restored as a fallback or recovery mechanism.
 
-```sh
-python -c 'import secrets; print(secrets.token_urlsafe(48))'
-```
+## Review endpoints
 
-On Termux, the API startup script can load it from a private file
-outside the repository. Generate and store one locally:
+All paths below are under `/api/v1`.
 
-```sh
-mkdir -p "$HOME/.config/amiki"
-umask 077
-python -c 'import secrets; print(secrets.token_urlsafe(48))' > "$HOME/.config/amiki/owner-review-token"
-chmod 600 "$HOME/.config/amiki/owner-review-token"
-```
+| Endpoint | Required UOSA scope | Level |
+|---|---|---:|
+| `GET /learning/review-queue?kind=all&limit=100` | `ale.review.read` | L1 |
+| `POST /learning/review-queue/{record_id}/approve` | `ale.review.approve` | L2 |
+| `POST /learning/review-queue/{record_id}/reject` | `ale.review.reject` | L2 |
+| `GET /learning/knowledge-map` | `ale.knowledge.read` | L1 |
+| `POST /learning/knowledge/{record_id}/extract-claims` | `ale.claims.extract` | L2 |
+| `GET /learning/claims/{claim_id}/evidence-assessment` | `ale.claims.review` | L1 |
+| `POST /learning/claims/{claim_id}/evidence-evaluation` | `ale.claims.evaluate` | L2 |
+| `POST /learning/knowledge-map/semantic-analysis` | `ale.claims.analyze` | L1 |
 
-The default startup-script path is
-`$HOME/.config/amiki/owner-review-token`. To use another path, set
-`AMIKI_OWNER_REVIEW_TOKEN_FILE` before launching the API. An explicitly exported
-`AMIKI_OWNER_REVIEW_TOKEN` takes precedence over the file. Restart the API process
-after creating or changing the token file so the new environment is loaded.
-
-Copy the token from that private file into the Android Learning Review screen.
-Do not paste it into chat, commit it, or store it in the repository.
-
-## Endpoints
-
-All endpoints are under `/api/v1` and require:
-
-```
-Authorization: Bearer <owner-token>
-```
+Progress, curriculum-progress, and project routes are separately scoped:
+`ale.progress.read/write` and `ale.projects.read/write` (L1).
 
 ### List pending candidates
 
@@ -77,13 +69,31 @@ be promoted as knowledge. Approval makes the knowledge eligible for ALE retrieva
 Rejects a pending knowledge candidate or correction experience. Decisions cannot
 be repeated against already-reviewed records.
 
-## Trust boundaries and limitations
+## Enrollment and recovery
 
-The API does not verify the truth of a research candidate. The owner must inspect
+First-owner setup is a separate, one-time ceremony. Run
+`python scripts/create_uosa_setup_code.py` from the backend repository on the
+trusted host, then enter the displayed high-entropy code into the initial device
+enrollment flow. It expires after 15 minutes and is consumed by the first
+successful P-256 device enrollment. The backend removes the local setup-code
+handoff file after successful enrollment.
+
+The first enrollment returns ten one-time recovery codes. Store them offline;
+the server stores only their SHA-256 hashes. A successful recovery invalidates
+all previously enrolled devices, sessions, and outstanding challenges, consumes
+the submitted recovery code, and rotates the full recovery-code set. A current
+owner can also rotate recovery codes using the L2
+`uosa.recovery.manage` scope.
+
+See `docs/UOSA_SECURITY_RUNBOOK.md` for operational setup, secondary-device
+enrollment, key rotation, recovery, and deployment constraints.
+
+## Trust boundaries
+
+The API does not prove the truth of a research candidate. The owner must inspect
 its source and evidence before approval. External snippets remain untrusted data.
-This API does not update model weights or perform fine-tuning.
+ALE does not update provider model weights or perform fine-tuning.
 
-The bearer token is a narrow first owner gate, not a complete authentication
-system for the wider Amiki API. Network exposure, HTTPS termination, token
-rotation, audit logging, and Android-side secure credential storage remain
-separate deployment/security tasks.
+UOSA L3 is deliberately not enabled by this release. Cipher X, emergency
+isolation, and other critical actions require a separately designed and tested
+authorization authority; an Amiki Core session must never confer those rights.

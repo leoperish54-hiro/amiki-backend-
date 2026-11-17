@@ -8,3 +8,4 @@ python-dotenv
 python-multipart
 
 pypdf
+cryptography>=45.0.0,<51

@@ -1,6 +1,4 @@
-from fastapi import APIRouter, Depends
-
-from interfaces.api.security import require_api_auth
+from fastapi import APIRouter
 
 from interfaces.api.routes.academic import router as academic_router
 from interfaces.api.routes.agents import router as agents_router
@@ -17,15 +15,13 @@ from interfaces.api.routes.memory import router as memory_router
 from interfaces.api.routes.learning import router as learning_router
 from interfaces.api.routes.observability import router as observability_router
 from interfaces.api.routes.settings import router as settings_router
+from interfaces.api.routes.security import router as security_router
 from interfaces.api.routes.system_state import router as system_state_router
 from interfaces.api.routes.voice import router as voice_router
 from interfaces.api.routes.workspace import router as workspace_router
 
-public_router = APIRouter(prefix="/api/v1")
-public_router.include_router(health_router)
-
-# Every route except the minimal liveness endpoint requires the Core API token.
-router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_auth)])
+router = APIRouter(prefix="/api/v1")
+router.include_router(health_router)
 router.include_router(capabilities_router)
 router.include_router(database_router)
 router.include_router(chat_router)
@@ -40,6 +36,7 @@ router.include_router(agents_router)
 router.include_router(academic_router)
 router.include_router(workspace_router)
 router.include_router(settings_router)
+router.include_router(security_router)
 router.include_router(voice_router)
 router.include_router(cloud_router)
 router.include_router(cipher_router)
