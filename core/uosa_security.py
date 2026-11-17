@@ -25,7 +25,8 @@ CHALLENGE_TTL_SECONDS = 120
 CHALLENGE_ISSUE_WINDOW_SECONDS = 300
 CHALLENGE_ISSUE_MAX_ATTEMPTS = 30
 CHALLENGE_ISSUE_LOCK_SECONDS = 120
-SESSION_TTL_SECONDS = 900
+SESSION_TTL_SECONDS = 900  # Privileged Cipher/ALE/Cloud sessions only.
+GENERAL_ACCESS_TTL_SECONDS = 300
 ELEVATED_SESSION_TTL_SECONDS = 120
 RECOVERY_CODE_COUNT = 10
 RECOVERY_CODE_TTL_SECONDS = 365 * 24 * 60 * 60
@@ -108,6 +109,7 @@ SCOPE_AUTH_LEVEL = {
 }
 AUTH_LEVEL_RANK = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
 DOMAIN = "AMIKI-UOSA-CHALLENGE-v1\n"
+PRIVILEGED_SCOPE_PREFIXES = ("cipher.", "ale.", "cloud.")
 
 
 class UosaError(ValueError):
@@ -142,6 +144,19 @@ class UosaConfigurationError(UosaError):
 
 def _now() -> int:
     return int(time.time())
+def classify_scope_class(scopes: list[str] | tuple[str, ...]) -> str:
+    """Classify a scope request; mixed privilege domains are rejected."""
+    normalized = set(scopes)
+    if not normalized or any(scope not in ALLOWED_SCOPES for scope in normalized):
+        raise UosaAuthorizationError("One or more requested owner scopes are not permitted.")
+    classes = {"privileged" if scope.startswith(PRIVILEGED_SCOPE_PREFIXES) else "general"
+               for scope in normalized}
+    if len(classes) != 1:
+        raise UosaAuthorizationError(
+            "General capabilities and Cipher/ALE/Cloud scopes must use separate sessions."
+        )
+    return next(iter(classes))
+
 
 
 def _database_path() -> Path:
@@ -225,6 +240,20 @@ def _initialize(connection: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_uosa_sessions_device
             ON uosa_sessions(device_id, expires_at);
+        CREATE TABLE IF NOT EXISTS uosa_general_grants (
+            grant_id TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL,
+            audience TEXT NOT NULL,
+            scopes_json TEXT NOT NULL,
+            continuity_public_key_der BLOB NOT NULL,
+            continuity_key_fingerprint TEXT NOT NULL UNIQUE,
+            device_generation INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            last_used_at INTEGER,
+            revoked_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_uosa_general_grants_device
+            ON uosa_general_grants(device_id, device_generation, revoked_at);
         CREATE TABLE IF NOT EXISTS uosa_security_events (
             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_type TEXT NOT NULL,
@@ -296,6 +325,8 @@ def _initialize(connection: sqlite3.Connection) -> None:
         )
     if "consumed_at" not in session_columns:
         connection.execute("ALTER TABLE uosa_sessions ADD COLUMN consumed_at INTEGER")
+    if "grant_id" not in session_columns:
+        connection.execute("ALTER TABLE uosa_sessions ADD COLUMN grant_id TEXT")
     connection.commit()
     try:
         os.chmod(_database_path(), 0o600)
