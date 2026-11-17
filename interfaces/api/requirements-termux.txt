@@ -1,0 +1,11 @@
+# Termux-specific API dependencies.
+# Install the native crypto provider with: pkg install python-cryptography
+# Do not pip-install cryptography on Termux; see docs/UOSA_SECURITY_RUNBOOK.md.
+fastapi==0.141.1
+uvicorn==0.52.4
+httpx==0.28.1
+pytest==8.4.2
+requests
+python-dotenv
+python-multipart
+pypdf

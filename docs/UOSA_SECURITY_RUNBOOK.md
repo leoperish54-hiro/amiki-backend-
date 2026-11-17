@@ -21,6 +21,36 @@ and L2. L3 is intentionally unavailable pending separate federation and
 critical-action policy work for Cipher X / emergency isolation. Do not treat an
 L1 or L2 Core session as an L3 capability.
 
+## Termux cryptography prerequisite
+
+The UOSA verifier depends on `cryptography` for P-256 signature verification.
+On Termux/Android, install the Termux-built native package instead of
+installing `cryptography` from PyPI:
+
+```sh
+pkg install python-cryptography
+```
+
+The backend virtual environment must be able to see Termux's system packages.
+Check `.venv/pyvenv.cfg` for `include-system-site-packages = true`. If the
+existing environment was created without system packages, do not overwrite it
+blindly; first preserve its package list, then recreate it with:
+
+```sh
+python -m venv --system-site-packages .venv
+.venv/bin/python -m pip install -r interfaces/api/requirements-termux.txt
+```
+
+`requirements-termux.txt` intentionally omits `cryptography`; the native
+Termux package supplies it. Verify the exact interpreter used by the API:
+
+```sh
+.venv/bin/python -c "import cryptography; from cryptography.hazmat.primitives.asymmetric import ec; print(cryptography.__version__)"
+```
+
+Do not run `pip install cryptography` inside the Termux environment. A pip-built
+Rust extension can lack the expected Termux `libpython` linkage; the
+package-managed build is the supported path for this local Android runtime.
 ## First-owner setup (one time)
 
 1. Run the backend on the trusted local host and verify that the Core API is

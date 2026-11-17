@@ -32,11 +32,24 @@ if [ -z "${AMIKI_READ_TOKEN:-}" ] && [ -s "$CIPHER_READ_TOKEN_FILE" ]; then
     export AMIKI_READ_TOKEN="$(tr -d '\r\n' < "$CIPHER_READ_TOKEN_FILE")"
 fi
 
+API_PYTHON="${AMIKI_API_PYTHON:-$ROOT/.venv/bin/python}"
+if [ ! -x "$API_PYTHON" ]; then
+    printf 'Amiki API Python interpreter not found: %s\\n' "$API_PYTHON" >&2
+    exit 1
+fi
+
+# Termux must use its package-managed cryptography build. A pip-built native
+# extension can fail to link against Termux's libpython on Android.
+if ! "$API_PYTHON" -c 'from cryptography.hazmat.primitives.asymmetric import ec' >/dev/null 2>&1; then
+    printf 'UOSA crypto dependency is unavailable to %s. On Termux run: pkg install python-cryptography; ensure .venv was created with --system-site-packages; install interfaces/api/requirements-termux.txt (not the pip cryptography extra).\\n' "$API_PYTHON" >&2
+    exit 1
+fi
+
 if curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1; then
     exit 0
 fi
 
-nohup .venv/bin/python -m uvicorn interfaces.api.server.app:app \
+nohup "$API_PYTHON" -m uvicorn interfaces.api.server.app:app \
     --host 127.0.0.1 \
     --port 8000 \
     >> /data/data/com.termux/files/home/amiki-api.log 2>&1 &
