@@ -1253,6 +1253,10 @@ def complete_recovery(
             (now,),
         )
         connection.execute(
+            "UPDATE uosa_general_grants SET revoked_at = ? WHERE revoked_at IS NULL",
+            (now,),
+        )
+        connection.execute(
             "UPDATE uosa_challenges SET consumed_at = ? "
             "WHERE consumed_at IS NULL AND expires_at > ?",
             (now, now),
@@ -1301,8 +1305,7 @@ def create_session_challenge(
     if not scopes or len(scopes) > len(ALLOWED_SCOPES):
         raise UosaValidationError("At least one valid owner scope is required.")
     normalized = sorted(set(scopes))
-    if any(scope not in ALLOWED_SCOPES for scope in normalized):
-        raise UosaAuthorizationError("One or more requested owner scopes are not permitted.")
+    scope_class = classify_scope_class(normalized)
     with _connection() as connection:
         _initialize(connection)
         connection.execute("BEGIN IMMEDIATE")
@@ -1323,6 +1326,7 @@ def create_session_challenge(
             context={
                 "audience": audience,
                 "scopes": normalized,
+                "scope_class": scope_class,
                 "enrollment_generation": device["enrollment_generation"],
                 "key_fingerprint": device["key_fingerprint"],
             },
@@ -1374,11 +1378,12 @@ def complete_session(*, challenge_id: str, signature_b64: str) -> dict[str, Any]
         now = _now()
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
-        expires = now + SESSION_TTL_SECONDS
+        ttl = SESSION_TTL_SECONDS if scope_class == "privileged" else GENERAL_ACCESS_TTL_SECONDS
+        expires = now + ttl
         connection.execute(
             "INSERT INTO uosa_sessions "
             "(token_hash, device_id, audience, scopes_json, auth_level, created_at, "
-            "expires_at, device_generation) VALUES (?, ?, ?, ?, 'L1', ?, ?, ?)",
+            "expires_at, device_generation, grant_id) VALUES (?, ?, ?, ?, 'L1', ?, ?, ?, NULL)",
             (
                 token_hash, challenge["device_id"], context["audience"],
                 json.dumps(context["scopes"], sort_keys=True), now, expires,
@@ -1388,15 +1393,17 @@ def complete_session(*, challenge_id: str, signature_b64: str) -> dict[str, Any]
         _event(connection, "session.issued", challenge["device_id"], {
             "audience": context["audience"], "scopes": context["scopes"],
             "expires_at": expires,
+            "session_class": scope_class,
         })
         return {
             "access_token": token,
             "token_type": "Bearer",
             "expires_at": expires,
-            "expires_in_seconds": SESSION_TTL_SECONDS,
+            "expires_in_seconds": ttl,
             "audience": context["audience"],
             "scopes": context["scopes"],
             "auth_level": "L1",
+            "session_class": scope_class,
         }
 
 
@@ -1607,12 +1614,16 @@ def get_session(token: str) -> dict[str, Any] | None:
         row = connection.execute(
             "SELECT s.device_id, s.audience, s.scopes_json, s.auth_level, "
             "s.created_at, s.expires_at, s.transaction_hash, s.single_use, "
-            "s.consumed_at, s.device_generation FROM uosa_sessions AS s "
+            "s.consumed_at, s.device_generation, s.grant_id FROM uosa_sessions AS s "
             "JOIN uosa_devices AS d ON d.device_id = s.device_id "
             "AND d.revoked_at IS NULL "
             "AND d.enrollment_generation = s.device_generation "
             "WHERE s.token_hash = ? AND s.revoked_at IS NULL "
-            "AND s.consumed_at IS NULL AND s.expires_at > ?",
+            "AND s.consumed_at IS NULL AND s.expires_at > ? "
+            "AND (s.grant_id IS NULL OR EXISTS ("
+            "SELECT 1 FROM uosa_general_grants AS g WHERE g.grant_id = s.grant_id "
+            "AND g.device_id = s.device_id AND g.device_generation = s.device_generation "
+            "AND g.revoked_at IS NULL))",
             (token_hash, _now()),
         ).fetchone()
         if row is None:
@@ -1627,6 +1638,8 @@ def get_session(token: str) -> dict[str, Any] | None:
             "transaction_hash": row["transaction_hash"],
             "single_use": bool(row["single_use"]),
             "device_generation": row["device_generation"],
+            "grant_id": row["grant_id"],
+            "session_class": "general" if row["grant_id"] is not None else classify_scope_class(json.loads(row["scopes_json"])),
         }
 
 
@@ -1860,6 +1873,11 @@ def complete_key_rotation(
             (now, device_id),
         )
         connection.execute(
+            "UPDATE uosa_general_grants SET revoked_at = ? "
+            "WHERE device_id = ? AND revoked_at IS NULL",
+            (now, device_id),
+        )
+        connection.execute(
             "UPDATE uosa_challenges SET consumed_at = ? "
             "WHERE device_id = ? AND consumed_at IS NULL AND expires_at > ?",
             (now, device_id, now),
@@ -1892,6 +1910,11 @@ def revoke_device(device_id: str) -> bool:
         if cursor.rowcount:
             connection.execute(
                 "UPDATE uosa_sessions SET revoked_at = ? "
+                "WHERE device_id = ? AND revoked_at IS NULL",
+                (now, device_id),
+            )
+            connection.execute(
+                "UPDATE uosa_general_grants SET revoked_at = ? "
                 "WHERE device_id = ? AND revoked_at IS NULL",
                 (now, device_id),
             )
