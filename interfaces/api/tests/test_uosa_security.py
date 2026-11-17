@@ -485,6 +485,205 @@ def _recover_owner_device(recovery_code, device_id):
     assert recovered.status_code == 200, recovered.text
     return new_private, new_public, recovered.json()
 
+
+def _create_general_grant(owner_private, device_id, scopes, continuity_private=None):
+    if continuity_private is None:
+        continuity_private, continuity_public = _keypair()
+    else:
+        public_der = continuity_private.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        continuity_public = base64.b64encode(public_der).decode("ascii")
+    challenge = client.post(
+        "/api/v1/security/general-grants/challenges",
+        json={
+            "device_id": device_id,
+            "audience": "amiki-core",
+            "scopes": scopes,
+            "continuity_public_key": continuity_public,
+        },
+    )
+    assert challenge.status_code == 200, challenge.text
+    completed = client.post(
+        "/api/v1/security/general-grants",
+        json={
+            "challenge_id": challenge.json()["challenge_id"],
+            "signature": _sign(owner_private, challenge.json()),
+        },
+    )
+    assert completed.status_code == 200, completed.text
+    return continuity_private, completed.json()
+
+
+
+
+def test_session_scope_classes_reject_mixed_capability_domains(uosa_db):
+    owner_private, owner_public = _keypair()
+    _enroll(owner_private, owner_public)
+    mixed = client.post(
+        "/api/v1/security/challenges",
+        json={
+            "device_id": "test-device-1",
+            "audience": "amiki-core",
+            "scopes": ["chat.use", "ale.review.read"],
+        },
+    )
+    assert mixed.status_code == 403
+    assert "separate sessions" in mixed.json()["detail"]
+    general = client.post(
+        "/api/v1/security/challenges",
+        json={
+            "device_id": "test-device-1",
+            "audience": "amiki-core",
+            "scopes": ["chat.use", "agents.run", "device.read"],
+        },
+    )
+    assert general.status_code == 200
+    privileged = client.post(
+        "/api/v1/security/challenges",
+        json={
+            "device_id": "test-device-1",
+            "audience": "amiki-core",
+            "scopes": ["cipher.inspect", "ale.review.read", "cloud.jobs.read"],
+        },
+    )
+    assert privileged.status_code == 200
+
+
+def test_general_access_sessions_are_short_and_privileged_sessions_remain_15_minutes(uosa_db):
+    owner_private, owner_public = _keypair()
+    _enroll(owner_private, owner_public)
+    general_challenge = client.post(
+        "/api/v1/security/challenges",
+        json={
+            "device_id": "test-device-1",
+            "audience": "amiki-core",
+            "scopes": ["chat.use", "agents.run"],
+        },
+    ).json()
+    general = client.post(
+        "/api/v1/security/sessions",
+        json={
+            "challenge_id": general_challenge["challenge_id"],
+            "signature": _sign(owner_private, general_challenge),
+        },
+    )
+    assert general.status_code == 200
+    assert general.json()["expires_in_seconds"] == uosa_security.GENERAL_ACCESS_TTL_SECONDS
+    assert general.json()["session_class"] == "general"
+
+    privileged_challenge = client.post(
+        "/api/v1/security/challenges",
+        json={
+            "device_id": "test-device-1",
+            "audience": "amiki-core",
+            "scopes": ["ale.review.read", "cloud.jobs.read", "cipher.inspect"],
+        },
+    ).json()
+    privileged = client.post(
+        "/api/v1/security/sessions",
+        json={
+            "challenge_id": privileged_challenge["challenge_id"],
+            "signature": _sign(owner_private, privileged_challenge),
+        },
+    )
+    assert privileged.status_code == 200
+    assert privileged.json()["expires_in_seconds"] == 900
+    assert privileged.json()["session_class"] == "privileged"
+
+
+def test_general_grant_refresh_uses_continuity_key_and_can_be_revoked(uosa_db):
+    owner_private, owner_public = _keypair()
+    _enroll(owner_private, owner_public)
+    continuity_private, grant = _create_general_grant(
+        owner_private, "test-device-1", ["chat.use", "agents.run", "device.read"]
+    )
+    assert grant["session_class"] == "general"
+    assert grant["grant_persistent"] is True
+    assert grant["expires_in_seconds"] == uosa_security.GENERAL_ACCESS_TTL_SECONDS
+    assert "ale.review.read" not in grant["scopes"]
+    assert "cloud.jobs.read" not in grant["scopes"]
+
+    # Prove the original bearer expires while the persistent grant remains renewable.
+    with uosa_security._connect() as connection:
+        connection.execute(
+            "UPDATE uosa_sessions SET expires_at = ? WHERE grant_id = ?",
+            (uosa_security._now() - 1, grant["grant_id"]),
+        )
+    assert uosa_security.get_session(grant["access_token"]) is None
+
+    refresh = client.post(
+        f"/api/v1/security/general-grants/{grant['grant_id']}/refresh-challenges"
+    )
+    assert refresh.status_code == 200
+    refreshed = client.post(
+        "/api/v1/security/general-grants/refresh",
+        json={
+            "challenge_id": refresh.json()["challenge_id"],
+            "signature": _sign(continuity_private, refresh.json()),
+        },
+    )
+    assert refreshed.status_code == 200, refreshed.text
+    refreshed_payload = refreshed.json()
+    assert refreshed_payload["grant_id"] == grant["grant_id"]
+    assert refreshed_payload["expires_in_seconds"] == uosa_security.GENERAL_ACCESS_TTL_SECONDS
+    assert uosa_security.get_session(refreshed_payload["access_token"]) is not None
+
+    replay = client.post(
+        "/api/v1/security/general-grants/refresh",
+        json={
+            "challenge_id": refresh.json()["challenge_id"],
+            "signature": _sign(continuity_private, refresh.json()),
+        },
+    )
+    assert replay.status_code == 401
+
+    revoked = client.delete(
+        "/api/v1/security/general-grants/current",
+        headers={"Authorization": f"Bearer {refreshed_payload['access_token']}"},
+    )
+    assert revoked.status_code == 200
+    assert uosa_security.get_session(refreshed_payload["access_token"]) is None
+    after_revoke = client.post(
+        f"/api/v1/security/general-grants/{grant['grant_id']}/refresh-challenges"
+    )
+    assert after_revoke.status_code == 401
+
+
+def test_general_grants_cannot_contain_privileged_scopes_and_agents_keep_l2(uosa_db):
+    owner_private, owner_public = _keypair()
+    _enroll(owner_private, owner_public)
+    continuity_private, continuity_public = _keypair()
+    denied = client.post(
+        "/api/v1/security/general-grants/challenges",
+        json={
+            "device_id": "test-device-1",
+            "audience": "amiki-core",
+            "scopes": ["chat.use", "ale.review.read"],
+            "continuity_public_key": continuity_public,
+        },
+    )
+    assert denied.status_code == 403
+
+    _, grant = _create_general_grant(
+        owner_private, "test-device-1", ["chat.use", "agents.run"]
+    )
+    transaction_hash = "a" * 64
+    elevation = client.post(
+        "/api/v1/security/elevation-challenges",
+        headers={"Authorization": f"Bearer {grant['access_token']}"},
+        json={
+            "auth_level": "L2",
+            "scope": "agents.run",
+            "transaction_hash": transaction_hash,
+        },
+    )
+    assert elevation.status_code == 200
+    assert elevation.json()["expires_in_seconds"] == uosa_security.CHALLENGE_TTL_SECONDS
+
+
+
 def test_transaction_binding_uses_canonical_json_and_newline_separators():
     method = "POST"
     path = "/api/v1/device/ui-actions/authorize"
