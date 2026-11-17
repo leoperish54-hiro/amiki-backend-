@@ -1,6 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from core.context import clear_context
+from interfaces.api.routes.security import require_uosa_scope
 from core.memory import clear_memory
 from core.memory_manager import recall
 from interfaces.api.schemas.memory import MemoryResponse
@@ -9,21 +10,21 @@ from interfaces.api.schemas.memory import MemoryResponse
 router = APIRouter()
 
 
-@router.get("/memory", response_model=MemoryResponse)
+@router.get("/memory", response_model=MemoryResponse, dependencies=[Depends(require_uosa_scope("memory.read"))])
 def memory_endpoint():
     return MemoryResponse(
         memories=recall()
     )
 
 
-@router.delete("/memory/current-session")
+@router.delete("/memory/current-session", dependencies=[Depends(require_uosa_scope("memory.session.clear"))])
 def clear_current_session_endpoint():
     """Clear the current conversation context."""
     clear_context()
     return {"status": "cleared", "target": "current_session"}
 
 
-@router.delete("/memory/persistent")
+@router.delete("/memory/persistent", dependencies=[Depends(require_uosa_scope("memory.persistent.clear"))])
 def clear_persistent_memory_endpoint():
     """Clear all persistent long-term memory facts."""
     clear_memory()

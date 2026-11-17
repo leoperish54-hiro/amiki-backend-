@@ -15,7 +15,7 @@ from core.cloud_autonomy_worker import (
     run_worker,
 )
 from core.system_state import SystemState
-from interfaces.api.routes.router import public_router, router
+from interfaces.api.routes.router import router
 
 logger = logging.getLogger(__name__)
 
@@ -119,5 +119,4 @@ app = FastAPI(title="Amiki API", version="1.0.0", lifespan=lifespan)
 
 app.state.system_state = SystemState.from_runtime()
 
-app.include_router(public_router)
 app.include_router(router)

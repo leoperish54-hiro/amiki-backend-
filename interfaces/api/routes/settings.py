@@ -9,10 +9,11 @@ import re
 import tempfile
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core import context as context_runtime
+from interfaces.api.routes.security import require_uosa_scope
 from core import model as model_runtime
 from core.system_state import BASE_DIR
 
@@ -97,7 +98,7 @@ def _display_user_name(config: dict) -> str:
     return match.group(1).strip() if match else value
 
 
-@router.get("/settings")
+@router.get("/settings", dependencies=[Depends(require_uosa_scope("settings.read"))])
 def settings_endpoint():
     """Return live settings and identity data for clients; never return credentials."""
     config = _read_config()
@@ -130,7 +131,7 @@ def settings_endpoint():
     }
 
 
-@router.put("/settings/model")
+@router.put("/settings/model", dependencies=[Depends(require_uosa_scope("settings.write"))])
 def update_model_settings(request: ModelSettingsUpdate):
     """Update the configured model identifier and/or temperature in the running API."""
     if request.model is None and request.temperature is None:
@@ -171,7 +172,7 @@ def update_model_settings(request: ModelSettingsUpdate):
     }
 
 
-@router.put("/settings/memory")
+@router.put("/settings/memory", dependencies=[Depends(require_uosa_scope("settings.write"))])
 def update_memory_settings(request: MemorySettingsUpdate):
     """Change current-conversation retention settings in config and runtime."""
     if request.enabled is None and request.max_messages is None:

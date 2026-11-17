@@ -3,10 +3,11 @@
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.agents.orchestrator import AgentOrchestrator
+from interfaces.api.routes.security import require_uosa_scope
 from core.agents.specialized import (
     build_analysis_agent,
     build_direct_analysis_agent,
@@ -74,7 +75,7 @@ def direct_agent_capabilities():
     }
 
 
-@router.post("/agents/run")
+@router.post("/agents/run", dependencies=[Depends(require_uosa_scope("agents.run"))])
 def run_direct_agent(request: AgentDirectRequest):
     allowed_context = _CONTEXT_KEYS[request.agent]
     if any(key not in allowed_context for key in request.context):

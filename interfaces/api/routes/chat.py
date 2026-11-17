@@ -1,4 +1,4 @@
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from hashlib import sha256
 import json
 from threading import Lock
@@ -12,6 +12,7 @@ from core.conversations.store import (
 )
 from core.attachments import Attachment, AttachmentInput, MAX_ATTACHMENT_SIZE_BYTES
 from interfaces.api.schemas.chat import ChatRequest, ChatResponse
+from interfaces.api.routes.security import require_uosa_scope
 
 
 router = APIRouter()
@@ -192,7 +193,7 @@ def _raise_chat_error(response):
         raise HTTPException(status_code=500, detail="Amiki encountered an internal error.")
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=ChatResponse, dependencies=[Depends(require_uosa_scope("chat.use"))])
 def chat_endpoint(request: ChatRequest):
     if request.attachments:
         raise HTTPException(
@@ -250,7 +251,7 @@ def chat_endpoint(request: ChatRequest):
     )
 
 
-@router.post("/chat/attachments", response_model=ChatResponse)
+@router.post("/chat/attachments", response_model=ChatResponse, dependencies=[Depends(require_uosa_scope("chat.use"))])
 async def chat_attachments_endpoint(
     message: str = Form(...),
     capability: str | None = Form(None),

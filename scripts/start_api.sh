@@ -20,12 +20,10 @@ if [ -s "$TOKEN_FILE" ]; then
     export AMIKI_CLOUD_API_TOKEN="$(cat "$TOKEN_FILE")"
 fi
 
-# Load the narrow ALE owner-review token from a private file. An explicitly
-# exported environment value takes precedence; the secret is never logged.
-OWNER_REVIEW_TOKEN_FILE="${AMIKI_OWNER_REVIEW_TOKEN_FILE:-$HOME/.config/amiki/owner-review-token}"
-if [ -z "${AMIKI_OWNER_REVIEW_TOKEN:-}" ] && [ -s "$OWNER_REVIEW_TOKEN_FILE" ]; then
-    export AMIKI_OWNER_REVIEW_TOKEN="$(tr -d '\r\n' < "$OWNER_REVIEW_TOKEN_FILE")"
-fi
+# Owner authentication is UOSA-only. No legacy owner bearer is loaded here.
+unset AMIKI_OWNER_REVIEW_TOKEN AMIKI_OWNER_REVIEW_TOKEN_FILE
+# Initial device setup uses a short-lived one-time code generated explicitly by
+# scripts/create_uosa_setup_code.py; recovery uses one-time recovery codes.
 
 # Load Cipher's least-privilege read-only service token from a private file.
 # Cipher and Amiki use the same file; the token is never sent to Android or logged.
@@ -34,18 +32,24 @@ if [ -z "${AMIKI_READ_TOKEN:-}" ] && [ -s "$CIPHER_READ_TOKEN_FILE" ]; then
     export AMIKI_READ_TOKEN="$(tr -d '\r\n' < "$CIPHER_READ_TOKEN_FILE")"
 fi
 
-# Load the dedicated Android/Core API bearer token. This credential is distinct
-# from the ALE owner-review, Cloud service, and Cipher service tokens.
-API_TOKEN_FILE="${AMIKI_API_TOKEN_FILE:-$HOME/.config/amiki/api-token}"
-if [ -z "${AMIKI_API_TOKEN:-}" ] && [ -s "$API_TOKEN_FILE" ]; then
-    export AMIKI_API_TOKEN="$(tr -d '\r\n' < "$API_TOKEN_FILE")"
+API_PYTHON="${AMIKI_API_PYTHON:-$ROOT/.venv/bin/python}"
+if [ ! -x "$API_PYTHON" ]; then
+    printf 'Amiki API Python interpreter not found: %s\\n' "$API_PYTHON" >&2
+    exit 1
+fi
+
+# Termux must use its package-managed cryptography build. A pip-built native
+# extension can fail to link against Termux's libpython on Android.
+if ! "$API_PYTHON" -c 'from cryptography.hazmat.primitives.asymmetric import ec' >/dev/null 2>&1; then
+    printf 'UOSA crypto dependency is unavailable to %s. On Termux run: pkg install python-cryptography; ensure .venv was created with --system-site-packages; install interfaces/api/requirements-termux.txt (not the pip cryptography extra).\\n' "$API_PYTHON" >&2
+    exit 1
 fi
 
 if curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1; then
     exit 0
 fi
 
-nohup .venv/bin/python -m uvicorn interfaces.api.server.app:app \
+nohup "$API_PYTHON" -m uvicorn interfaces.api.server.app:app \
     --host 127.0.0.1 \
     --port 8000 \
     >> /data/data/com.termux/files/home/amiki-api.log 2>&1 &

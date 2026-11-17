@@ -1,8 +1,9 @@
 """Academic workspace API."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from core.academic import get_academic_state, save_academic_state
+from interfaces.api.routes.security import require_uosa_scope
 from interfaces.api.schemas.academic import (
     AcademicCourse,
     AcademicCourseCreate,
@@ -18,6 +19,7 @@ router = APIRouter()
 
 @router.get(
     "/academic",
+    dependencies=[Depends(require_uosa_scope("academic.read"))],
     response_model=AcademicStateResponse,
 )
 def academic_state_endpoint():
@@ -27,6 +29,7 @@ def academic_state_endpoint():
 
 @router.put(
     "/academic",
+    dependencies=[Depends(require_uosa_scope("academic.write"))],
     response_model=AcademicStateResponse,
 )
 def update_academic_state_endpoint(state: AcademicStateUpdate):
@@ -38,6 +41,7 @@ def update_academic_state_endpoint(state: AcademicStateUpdate):
 
 @router.post(
     "/academic/courses",
+    dependencies=[Depends(require_uosa_scope("academic.write"))],
     response_model=AcademicCourse,
     status_code=201,
 )
@@ -53,6 +57,7 @@ def add_academic_course_endpoint(course: AcademicCourseCreate):
 
 @router.get(
     "/academic/courses/{course_code}",
+    dependencies=[Depends(require_uosa_scope("academic.read"))],
     response_model=AcademicCourse,
 )
 def get_academic_course_endpoint(course_code: str):
@@ -67,6 +72,7 @@ def get_academic_course_endpoint(course_code: str):
 
 @router.put(
     "/academic/courses/{course_code}",
+    dependencies=[Depends(require_uosa_scope("academic.write"))],
     response_model=AcademicCourse,
 )
 def update_academic_course_endpoint(course_code: str, course: AcademicCourseUpdate):
@@ -85,6 +91,7 @@ def update_academic_course_endpoint(course_code: str, course: AcademicCourseUpda
 
 @router.post(
     "/academic/courses/{course_code}/study-records",
+    dependencies=[Depends(require_uosa_scope("academic.write"))],
     response_model=AcademicStudyRecord,
     status_code=201,
 )

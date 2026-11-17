@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import secrets
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -12,11 +11,12 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.goal_planner import GoalPlanningError, generate_goal_tasks
+from interfaces.api.routes.security import require_uosa_scope
 
 logger = logging.getLogger(__name__)
 
@@ -131,29 +131,6 @@ def _cloud_token() -> str:
     return token
 
 
-def _require_outbox_owner(authorization: str | None) -> None:
-    """Require the separately configured owner token for local outbox recovery."""
-    expected = os.getenv("AMIKI_OWNER_REVIEW_TOKEN", "").strip()
-    if len(expected) < 32:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="supervisor_outbox_owner_auth_not_configured",
-        )
-
-    scheme, separator, supplied = (authorization or "").partition(" ")
-    if (
-        not separator
-        or scheme.lower() != "bearer"
-        or not supplied
-        or not secrets.compare_digest(supplied, expected)
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="supervisor_outbox_owner_authorization_required",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
 def _require_outbox_loopback(request: Request, action: str) -> None:
     client = request.client
     if client is None or client.host not in _LOOPBACK_CLIENT_HOSTS:
@@ -249,25 +226,25 @@ def _request(
     return payload
 
 
-@router.get("/autonomy/status")
+@router.get("/autonomy/status", dependencies=[Depends(require_uosa_scope("cloud.autonomy.read"))])
 def cloud_autonomy_status() -> dict:
     """Read the Cloud-wide execution stop state through the authenticated proxy."""
     return _request("GET", "/autonomy/status", authenticated=True)
 
 
-@router.post("/autonomy/stop")
+@router.post("/autonomy/stop", dependencies=[Depends(require_uosa_scope("cloud.autonomy.stop"))])
 def stop_cloud_autonomy() -> dict:
     """Stop Cloud execution after an explicit owner action in the client."""
     return _request("POST", "/autonomy/stop", authenticated=True)
 
 
-@router.post("/autonomy/resume")
+@router.post("/autonomy/resume", dependencies=[Depends(require_uosa_scope("cloud.autonomy.resume"))])
 def resume_cloud_autonomy() -> dict:
     """Resume Cloud execution after an explicit owner action in the client."""
     return _request("POST", "/autonomy/resume", authenticated=True)
 
 
-@router.get("/autonomy/worker/status")
+@router.get("/autonomy/worker/status", dependencies=[Depends(require_uosa_scope("cloud.autonomy.read"))])
 def cloud_autonomy_worker_status(request: Request) -> dict:
     """Report worker liveness and bounded supervisor recovery state."""
     enabled = bool(getattr(request.app.state, "cloud_autonomy_worker_enabled", False))
@@ -345,14 +322,12 @@ def cloud_autonomy_worker_status(request: Request) -> dict:
     return {"enabled": enabled, "running": running}
 
 
-@router.get("/autonomy/worker/outbox/dead-letters")
+@router.get("/autonomy/worker/outbox/dead-letters", dependencies=[Depends(require_uosa_scope("cloud.outbox.inspect"))])
 def list_cloud_autonomy_outbox_dead_letters(
     request: Request,
     limit: int = Query(default=50, ge=1, le=50),
-    authorization: str | None = Header(default=None),
 ) -> dict:
     """List bounded dead-letter IDs without exposing payloads or database paths."""
-    _require_outbox_owner(authorization)
     _require_outbox_loopback(request, "inspection")
 
     outbox = getattr(
@@ -382,14 +357,12 @@ def list_cloud_autonomy_outbox_dead_letters(
     return {"event_ids": event_ids, "count": len(event_ids)}
 
 
-@router.post("/autonomy/worker/outbox/retry")
+@router.post("/autonomy/worker/outbox/retry", dependencies=[Depends(require_uosa_scope("cloud.outbox.retry"))])
 def retry_cloud_autonomy_outbox(
     body: CloudSupervisorOutboxRetryRequest,
     request: Request,
-    authorization: str | None = Header(default=None),
 ) -> dict:
     """Retry selected dead letters after explicit owner authorization."""
-    _require_outbox_owner(authorization)
     _require_outbox_loopback(request, "retry")
 
     outbox = getattr(
@@ -435,14 +408,13 @@ def retry_cloud_autonomy_outbox(
 
 @router.post(
     "/autonomy/worker/outbox/supervisor/restart",
+    dependencies=[Depends(require_uosa_scope("cloud.outbox.restart"))],
     status_code=status.HTTP_202_ACCEPTED,
 )
 def restart_cloud_autonomy_outbox_supervisor(
     request: Request,
-    authorization: str | None = Header(default=None),
 ) -> dict:
     """Restart an exhausted outbox delivery supervisor after owner authorization."""
-    _require_outbox_owner(authorization)
     _require_outbox_loopback(request, "restart")
 
     supervisor = getattr(
@@ -520,13 +492,13 @@ def cloud_status() -> dict:
     }
 
 
-@router.get("/jobs")
+@router.get("/jobs", dependencies=[Depends(require_uosa_scope("cloud.jobs.read"))])
 def list_cloud_jobs(limit: int = Query(default=50, ge=1, le=100)) -> dict:
     """List recent Cloud jobs through the authenticated backend proxy."""
     return _request("GET", f"/jobs?limit={limit}", authenticated=True)
 
 
-@router.post("/jobs", status_code=status.HTTP_201_CREATED)
+@router.post("/jobs", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_uosa_scope("cloud.jobs.create"))])
 def create_cloud_job(body: CloudJobRequest) -> dict:
     """Create a registered built-in task through Amiki Cloud."""
     return _request(
@@ -547,19 +519,19 @@ def _normalize_job_id(job_id: str) -> str:
         ) from exc
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", dependencies=[Depends(require_uosa_scope("cloud.jobs.read"))])
 def get_cloud_job(job_id: str) -> dict:
     """Read a cloud job by UUID."""
     return _request("GET", f"/jobs/{_normalize_job_id(job_id)}", authenticated=True)
 
 
-@router.post("/jobs/{job_id}/run")
+@router.post("/jobs/{job_id}/run", dependencies=[Depends(require_uosa_scope("cloud.jobs.run"))])
 def run_cloud_job(job_id: str) -> dict:
     """Run a built-in task, or return its current state if already claimed."""
     return _request("POST", f"/jobs/{_normalize_job_id(job_id)}/run", authenticated=True)
 
 
-@router.post("/jobs/{job_id}/cancel")
+@router.post("/jobs/{job_id}/cancel", dependencies=[Depends(require_uosa_scope("cloud.jobs.cancel"))])
 def cancel_cloud_job(job_id: str) -> dict:
     """Cancel a queued simulated job."""
     return _request("POST", f"/jobs/{_normalize_job_id(job_id)}/cancel", authenticated=True)
@@ -576,7 +548,7 @@ def _normalize_goal_schedule_id(schedule_id: str) -> str:
         ) from exc
 
 
-@router.post("/goal-schedules", status_code=status.HTTP_201_CREATED)
+@router.post("/goal-schedules", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_uosa_scope("cloud.schedules.create"))])
 def create_cloud_goal_schedule(
     body: CloudGoalScheduleRequest,
     idempotency_key: Annotated[UUID | None, Header(alias="Idempotency-Key")] = None,
@@ -596,7 +568,7 @@ def create_cloud_goal_schedule(
     )
 
 
-@router.get("/goal-schedules")
+@router.get("/goal-schedules", dependencies=[Depends(require_uosa_scope("cloud.goals.read"))])
 def list_cloud_goal_schedules(limit: int = Query(default=50, ge=1, le=100)) -> dict:
     """List recurring goal intents through the authenticated Cloud proxy."""
     return _request(
@@ -606,7 +578,7 @@ def list_cloud_goal_schedules(limit: int = Query(default=50, ge=1, le=100)) -> d
     )
 
 
-@router.get("/goal-schedules/{schedule_id}/runs")
+@router.get("/goal-schedules/{schedule_id}/runs", dependencies=[Depends(require_uosa_scope("cloud.goals.read"))])
 def list_cloud_goal_schedule_runs(
     schedule_id: str,
     limit: int = Query(default=50, ge=1, le=100),
@@ -620,7 +592,7 @@ def list_cloud_goal_schedule_runs(
     )
 
 
-@router.post("/goal-schedules/{schedule_id}/{action}")
+@router.post("/goal-schedules/{schedule_id}/{action}", dependencies=[Depends(require_uosa_scope("cloud.schedules.manage"))])
 def change_cloud_goal_schedule(
     schedule_id: str,
     action: Literal["pause", "resume", "cancel"],
@@ -634,19 +606,19 @@ def change_cloud_goal_schedule(
     )
 
 
-@router.get("/goals")
+@router.get("/goals", dependencies=[Depends(require_uosa_scope("cloud.goals.read"))])
 def list_cloud_goals(limit: int = Query(default=50, ge=1, le=100)) -> dict:
     """List durable autonomous goals through the authenticated Cloud proxy."""
     return _request("GET", f"/goals?limit={limit}", authenticated=True)
 
 
-@router.get("/monitor/status")
+@router.get("/monitor/status", dependencies=[Depends(require_uosa_scope("cloud.monitor.read"))])
 def cloud_monitor_status() -> dict:
     """Read the authenticated Cloud monitor lifecycle and event counts."""
     return _request("GET", "/monitor/status", authenticated=True)
 
 
-@router.get("/monitor/events")
+@router.get("/monitor/events", dependencies=[Depends(require_uosa_scope("cloud.monitor.read"))])
 def list_cloud_monitor_events(
     state: Literal["open", "acknowledged", "resolved", "all"] = "open",
     limit: int = Query(default=50, ge=1, le=100),
@@ -659,7 +631,7 @@ def list_cloud_monitor_events(
     )
 
 
-@router.post("/monitor/events/{event_id}/acknowledge")
+@router.post("/monitor/events/{event_id}/acknowledge", dependencies=[Depends(require_uosa_scope("cloud.monitor.acknowledge"))])
 def acknowledge_cloud_monitor_event(
     event_id: int = PathParam(ge=1),
 ) -> dict:
@@ -671,7 +643,7 @@ def acknowledge_cloud_monitor_event(
     )
 
 
-@router.post("/goals", status_code=status.HTTP_201_CREATED)
+@router.post("/goals", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_uosa_scope("cloud.goals.create"))])
 def create_cloud_goal(
     body: CloudGoalRequest,
     idempotency_key: Annotated[UUID | None, Header(alias="Idempotency-Key")] = None,
@@ -695,7 +667,7 @@ def create_cloud_goal(
     )
 
 
-@router.post("/goals/plan", status_code=status.HTTP_201_CREATED)
+@router.post("/goals/plan", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_uosa_scope("cloud.goals.create"))])
 def create_planned_cloud_goal(
     body: CloudGoalPlanningRequest,
     idempotency_key: Annotated[UUID | None, Header(alias="Idempotency-Key")] = None,
@@ -759,7 +731,7 @@ def _normalize_task_id(task_id: str) -> str:
         ) from exc
 
 
-@router.get("/goals/{goal_id}")
+@router.get("/goals/{goal_id}", dependencies=[Depends(require_uosa_scope("cloud.goals.read"))])
 def get_cloud_goal(goal_id: str) -> dict:
     """Retrieve one persisted goal and its ordered task plan."""
     return _request(
@@ -767,7 +739,7 @@ def get_cloud_goal(goal_id: str) -> dict:
     )
 
 
-@router.post("/goals/{goal_id}/pause")
+@router.post("/goals/{goal_id}/pause", dependencies=[Depends(require_uosa_scope("cloud.goals.pause"))])
 def pause_cloud_goal(goal_id: str) -> dict:
     """Pause one Cloud goal and revoke its active specialist leases."""
     normalized_goal_id = _normalize_goal_id(goal_id)
@@ -778,7 +750,7 @@ def pause_cloud_goal(goal_id: str) -> dict:
     )
 
 
-@router.post("/goals/{goal_id}/resume")
+@router.post("/goals/{goal_id}/resume", dependencies=[Depends(require_uosa_scope("cloud.goals.resume"))])
 def resume_cloud_goal(goal_id: str) -> dict:
     """Resume one paused Cloud goal without bypassing lease grace."""
     normalized_goal_id = _normalize_goal_id(goal_id)
@@ -789,7 +761,7 @@ def resume_cloud_goal(goal_id: str) -> dict:
     )
 
 
-@router.post("/goals/{goal_id}/cancel")
+@router.post("/goals/{goal_id}/cancel", dependencies=[Depends(require_uosa_scope("cloud.goals.pause"))])
 def cancel_cloud_goal(goal_id: str) -> dict:
     """Cancel one Cloud goal and revoke all remaining task leases."""
     normalized_goal_id = _normalize_goal_id(goal_id)
@@ -800,7 +772,7 @@ def cancel_cloud_goal(goal_id: str) -> dict:
     )
 
 
-@router.patch("/goals/{goal_id}/tasks/{task_id}")
+@router.patch("/goals/{goal_id}/tasks/{task_id}", dependencies=[Depends(require_uosa_scope("cloud.goals.update"))])
 def update_cloud_goal_task(
     goal_id: str, task_id: str, body: CloudTaskStatusRequest
 ) -> dict:

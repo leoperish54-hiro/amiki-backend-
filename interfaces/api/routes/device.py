@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.agents.device import device_capabilities, plan_device_action, plan_device_request
+from interfaces.api.routes.security import require_uosa_scope
 from core.handlers.termux_device import (
     execute_approved_device_action,
     read_device_action,
@@ -24,7 +25,7 @@ def device_capabilities_endpoint():
     return device_capabilities()
 
 
-@router.get("/device/state")
+@router.get("/device/state", dependencies=[Depends(require_uosa_scope("device.read"))])
 def device_state_endpoint():
     """Read bounded device state through Termux:API without the Amiki UI."""
     return {
@@ -33,7 +34,7 @@ def device_state_endpoint():
     }
 
 
-@router.post("/device/execute")
+@router.post("/device/execute", dependencies=[Depends(require_uosa_scope("device.execute"))])
 def device_execute_endpoint(request: DevicePlanRequest):
     """Execute a supported action only after a Termux:API confirmation prompt."""
     return {
@@ -42,7 +43,7 @@ def device_execute_endpoint(request: DevicePlanRequest):
     }
 
 
-@router.post("/device/plan")
+@router.post("/device/plan", dependencies=[Depends(require_uosa_scope("device.plan"))])
 def device_plan_endpoint(request: DevicePlanRequest):
     try:
         plan = plan_device_action(request.action, request.arguments)
@@ -58,7 +59,7 @@ def device_plan_endpoint(request: DevicePlanRequest):
         "execution_model": "android_client",
     }
 
-@router.post("/device/plan-request")
+@router.post("/device/plan-request", dependencies=[Depends(require_uosa_scope("device.plan"))])
 def device_plan_request_endpoint(request: DeviceMessageRequest):
     try:
         plan = plan_device_request(request.message)

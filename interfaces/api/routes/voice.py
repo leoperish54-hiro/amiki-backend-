@@ -2,9 +2,10 @@
 import os
 
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from interfaces.api.routes.security import require_uosa_scope
 
 router = APIRouter()
 DEFAULT_VOICE_ID = "R8ZkkN7zI7hdqzfZoX5O"
@@ -16,7 +17,7 @@ class VoiceRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TEXT_LENGTH)
 
 
-@router.post("/voice")
+@router.post("/voice", dependencies=[Depends(require_uosa_scope("chat.use"))])
 def generate_voice(request: VoiceRequest):
     api_key = os.getenv("ELEVENLABS_API_KEY")
     if not api_key:
