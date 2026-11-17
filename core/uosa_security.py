@@ -1935,10 +1935,18 @@ def get_session(token: str) -> dict[str, Any] | None:
         ).fetchone()
         if row is None:
             return None
+        scopes = json.loads(row["scopes_json"])
+        try:
+            session_class = classify_scope_class(scopes)
+        except UosaAuthorizationError:
+            # Legacy mixed-scope sessions are invalidated immediately after rollout.
+            return None
+        if row["grant_id"] is not None and session_class != "general":
+            return None
         return {
             "device_id": row["device_id"],
             "audience": row["audience"],
-            "scopes": json.loads(row["scopes_json"]),
+            "scopes": scopes,
             "auth_level": row["auth_level"],
             "created_at": row["created_at"],
             "expires_at": row["expires_at"],
@@ -1946,7 +1954,7 @@ def get_session(token: str) -> dict[str, Any] | None:
             "single_use": bool(row["single_use"]),
             "device_generation": row["device_generation"],
             "grant_id": row["grant_id"],
-            "session_class": "general" if row["grant_id"] is not None else classify_scope_class(json.loads(row["scopes_json"])),
+            "session_class": session_class,
         }
 
 
