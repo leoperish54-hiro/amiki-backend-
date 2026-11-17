@@ -1769,6 +1769,7 @@ def create_elevation_challenge(
                 "scopes": [scope],
                 "transaction_hash": transaction_hash,
                 "base_token_hash": token_hash,
+                "base_grant_id": session.get("grant_id"),
                 "enrollment_generation": device["enrollment_generation"],
                 "key_fingerprint": device["key_fingerprint"],
             },
@@ -1807,12 +1808,20 @@ def complete_elevation(*, challenge_id: str, signature_b64: str) -> dict[str, An
         ):
             raise UosaAuthenticationError("The owner device enrollment has changed.")
         base = connection.execute(
-            "SELECT 1 FROM uosa_sessions WHERE token_hash = ? AND revoked_at IS NULL "
+            "SELECT grant_id FROM uosa_sessions WHERE token_hash = ? AND revoked_at IS NULL "
             "AND consumed_at IS NULL AND expires_at > ?",
             (context["base_token_hash"], _now()),
         ).fetchone()
-        if base is None:
+        if base is None or base["grant_id"] != context.get("base_grant_id"):
             raise UosaAuthenticationError("The base owner session is no longer active.")
+        if context.get("base_grant_id") is not None:
+            grant_active = connection.execute(
+                "SELECT 1 FROM uosa_general_grants WHERE grant_id = ? "
+                "AND device_id = ? AND revoked_at IS NULL",
+                (context["base_grant_id"], challenge["device_id"]),
+            ).fetchone()
+            if grant_active is None:
+                raise UosaAuthenticationError("The parent general authorization grant is no longer active.")
         _verify_signature(bytes(device["public_key_der"]), challenge["message"], signature_b64)
         connection.execute("BEGIN IMMEDIATE")
         current_device = connection.execute(
@@ -1824,11 +1833,23 @@ def complete_elevation(*, challenge_id: str, signature_b64: str) -> dict[str, An
             ),
         ).fetchone()
         current_base = connection.execute(
-            "SELECT 1 FROM uosa_sessions WHERE token_hash = ? AND revoked_at IS NULL "
+            "SELECT grant_id FROM uosa_sessions WHERE token_hash = ? AND revoked_at IS NULL "
             "AND consumed_at IS NULL AND expires_at > ?",
             (context["base_token_hash"], _now()),
         ).fetchone()
-        if current_device is None or current_base is None:
+        current_grant = None
+        if context.get("base_grant_id") is not None:
+            current_grant = connection.execute(
+                "SELECT 1 FROM uosa_general_grants WHERE grant_id = ? "
+                "AND device_id = ? AND revoked_at IS NULL",
+                (context["base_grant_id"], challenge["device_id"]),
+            ).fetchone()
+        if (
+            current_device is None
+            or current_base is None
+            or current_base["grant_id"] != context.get("base_grant_id")
+            or (context.get("base_grant_id") is not None and current_grant is None)
+        ):
             raise UosaAuthenticationError(
                 "The device or base session changed during elevation."
             )
@@ -1839,13 +1860,13 @@ def complete_elevation(*, challenge_id: str, signature_b64: str) -> dict[str, An
         connection.execute(
             "INSERT INTO uosa_sessions "
             "(token_hash, device_id, audience, scopes_json, auth_level, created_at, "
-            "expires_at, device_generation, transaction_hash, single_use) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            "expires_at, device_generation, transaction_hash, single_use, grant_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
             (
                 token_hash, challenge["device_id"], context["audience"],
                 json.dumps(context["scopes"], sort_keys=True), context["auth_level"],
                 now, expires, context["enrollment_generation"],
-                context["transaction_hash"],
+                context["transaction_hash"], context.get("base_grant_id"),
             ),
         )
         _event(connection, "session.elevated", challenge["device_id"], {
@@ -1877,12 +1898,16 @@ def consume_elevated_session(token: str, scope: str, transaction_hash: str) -> b
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
             "SELECT s.device_id, s.scopes_json, s.auth_level, s.transaction_hash, "
-            "s.single_use FROM uosa_sessions AS s "
+            "s.single_use, s.grant_id FROM uosa_sessions AS s "
             "JOIN uosa_devices AS d ON d.device_id = s.device_id "
             "AND d.revoked_at IS NULL "
             "AND d.enrollment_generation = s.device_generation "
             "WHERE s.token_hash = ? AND s.revoked_at IS NULL "
-            "AND s.consumed_at IS NULL AND s.expires_at > ?",
+            "AND s.consumed_at IS NULL AND s.expires_at > ? "
+            "AND (s.grant_id IS NULL OR EXISTS ("
+            "SELECT 1 FROM uosa_general_grants AS g WHERE g.grant_id = s.grant_id "
+            "AND g.device_id = s.device_id AND g.device_generation = s.device_generation "
+            "AND g.revoked_at IS NULL))",
             (token_hash, _now()),
         ).fetchone()
         if row is None or row["auth_level"] != "L2" or not row["single_use"]:
