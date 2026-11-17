@@ -709,6 +709,46 @@ def test_general_grants_cannot_contain_privileged_scopes_and_agents_keep_l2(uosa
 
 
 
+
+def test_general_grant_revocation_invalidates_derived_l2_elevations(uosa_db):
+    owner_private, owner_public = _keypair()
+    _enroll(owner_private, owner_public)
+    _, grant = _create_general_grant(
+        owner_private, "test-device-1", ["agents.run"]
+    )
+    transaction_hash = "b" * 64
+    challenge = client.post(
+        "/api/v1/security/elevation-challenges",
+        headers={"Authorization": f"Bearer {grant['access_token']}"},
+        json={
+            "auth_level": "L2",
+            "scope": "agents.run",
+            "transaction_hash": transaction_hash,
+        },
+    )
+    assert challenge.status_code == 200, challenge.text
+    elevated = client.post(
+        "/api/v1/security/elevated-sessions",
+        json={
+            "challenge_id": challenge.json()["challenge_id"],
+            "signature": _sign(owner_private, challenge.json()),
+        },
+    )
+    assert elevated.status_code == 200, elevated.text
+    elevated_token = elevated.json()["access_token"]
+    assert uosa_security.get_session(elevated_token) is not None
+
+    revoked = client.delete(
+        "/api/v1/security/general-grants/current",
+        headers={"Authorization": f"Bearer {grant['access_token']}"},
+    )
+    assert revoked.status_code == 200
+    assert uosa_security.get_session(elevated_token) is None
+    assert not uosa_security.consume_elevated_session(
+        elevated_token, "agents.run", transaction_hash
+    )
+
+
 def test_transaction_binding_uses_canonical_json_and_newline_separators():
     method = "POST"
     path = "/api/v1/device/ui-actions/authorize"
