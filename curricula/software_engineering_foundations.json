@@ -1,0 +1,330 @@
+{
+  "schema_version": 1,
+  "curriculum_id": "software-engineering-foundations",
+  "title": "Software Engineering Foundations",
+  "description": "A preparatory, skills-oriented pathway covering computing, programming, mathematical reasoning, algorithms, and practical software engineering.",
+  "classification": "general_foundations_not_an_official_unza_syllabus",
+  "audience": "Pre-university and early undergraduate learners",
+  "completion_policy": {
+    "provisional_pass_threshold": 0.8,
+    "note": "A recorded pass is provisional learning progress, not proof of mastery or a formally verified skill."
+  },
+  "courses": [
+    {
+      "id": "se-foundations",
+      "title": "Software Engineering Foundations",
+      "description": "Build the conceptual and practical foundations needed to study and practise software engineering.",
+      "modules": [
+        {
+          "id": "computing-basics",
+          "title": "Computing Foundations",
+          "description": "Understand how digital information and computer systems work.",
+          "lessons": [
+            {
+              "id": "binary-and-data",
+              "title": "Binary, Data, and Representation",
+              "summary": "How computers represent numbers, text, and other information.",
+              "objectives": [
+                "Convert small integers between decimal and binary.",
+                "Explain bits, bytes, and common units of digital storage.",
+                "Describe why text and other data require encoding."
+              ],
+              "prerequisites": [],
+              "estimated_minutes": 45,
+              "assessment": [
+                "binary_conversion",
+                "explain_encoding"
+              ]
+            },
+            {
+              "id": "computer-architecture",
+              "title": "CPU, Memory, Storage, and Operating Systems",
+              "summary": "The roles of the processor, memory, persistent storage, and operating system.",
+              "objectives": [
+                "Distinguish CPU, RAM, and persistent storage.",
+                "Describe the fetch-decode-execute cycle at a high level.",
+                "Explain the role of an operating system and a process."
+              ],
+              "prerequisites": [
+                "binary-and-data"
+              ],
+              "estimated_minutes": 50,
+              "assessment": [
+                "component_matching",
+                "process_explanation"
+              ]
+            },
+            {
+              "id": "command-line-and-environments",
+              "title": "Command Line and Development Environments",
+              "summary": "Navigate files, understand paths, and isolate project dependencies.",
+              "objectives": [
+                "Navigate directories and inspect files with shell commands.",
+                "Distinguish absolute and relative paths.",
+                "Explain why projects use isolated environments."
+              ],
+              "prerequisites": [
+                "computer-architecture"
+              ],
+              "estimated_minutes": 50,
+              "assessment": [
+                "shell_navigation_lab"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "programming-with-python",
+          "title": "Programming with Python",
+          "description": "Learn core programming concepts and express them in readable Python.",
+          "lessons": [
+            {
+              "id": "python-values-and-control-flow",
+              "title": "Values, Types, Expressions, and Control Flow",
+              "summary": "Variables, built-in types, operators, conditions, and loops.",
+              "objectives": [
+                "Use variables and core Python types correctly.",
+                "Evaluate expressions and explain type conversions.",
+                "Write conditional logic and bounded loops."
+              ],
+              "prerequisites": [
+                "command-line-and-environments"
+              ],
+              "estimated_minutes": 75,
+              "assessment": [
+                "predict_output",
+                "control_flow_exercises"
+              ]
+            },
+            {
+              "id": "python-functions-and-modules",
+              "title": "Functions, Scope, and Modules",
+              "summary": "Decompose problems into reusable functions and organise code.",
+              "objectives": [
+                "Define functions with parameters and return values.",
+                "Explain local scope and basic side effects.",
+                "Import and organise code into modules."
+              ],
+              "prerequisites": [
+                "python-values-and-control-flow"
+              ],
+              "estimated_minutes": 70,
+              "assessment": [
+                "function_implementation"
+              ]
+            },
+            {
+              "id": "python-collections",
+              "title": "Collections and Data Modelling",
+              "summary": "Use lists, tuples, dictionaries, and sets to represent data.",
+              "objectives": [
+                "Choose an appropriate built-in collection for a task.",
+                "Traverse and transform collections.",
+                "Explain mutability and common collection operations."
+              ],
+              "prerequisites": [
+                "python-functions-and-modules"
+              ],
+              "estimated_minutes": 75,
+              "assessment": [
+                "collection_exercises"
+              ]
+            },
+            {
+              "id": "python-errors-and-testing",
+              "title": "Exceptions, Debugging, and Automated Tests",
+              "summary": "Handle errors deliberately and test expected program behaviour.",
+              "objectives": [
+                "Distinguish syntax, runtime, and logic errors.",
+                "Use try, except, else, and finally appropriately.",
+                "Write tests for normal, boundary, and invalid inputs."
+              ],
+              "prerequisites": [
+                "python-collections"
+              ],
+              "estimated_minutes": 80,
+              "assessment": [
+                "exception_handling_lab",
+                "unit_test_lab"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "mathematics-and-problem-solving",
+          "title": "Mathematical Reasoning and Algorithms",
+          "description": "Develop the logical and quantitative reasoning used in programming.",
+          "lessons": [
+            {
+              "id": "logic-sets-and-functions",
+              "title": "Logic, Sets, Relations, and Functions",
+              "summary": "Discrete mathematical language used to describe program behaviour.",
+              "objectives": [
+                "Evaluate basic propositions and logical connectives.",
+                "Perform simple set operations.",
+                "Explain functions, domains, ranges, and relations."
+              ],
+              "prerequisites": [],
+              "estimated_minutes": 75,
+              "assessment": [
+                "logic_exercises",
+                "set_operations"
+              ]
+            },
+            {
+              "id": "algorithmic-thinking",
+              "title": "Algorithmic Thinking and Pseudocode",
+              "summary": "Translate a problem into precise, finite steps before coding.",
+              "objectives": [
+                "Identify inputs, outputs, and constraints.",
+                "Write structured pseudocode for a small problem.",
+                "Trace an algorithm using a hand-worked example."
+              ],
+              "prerequisites": [
+                "python-values-and-control-flow",
+                "logic-sets-and-functions"
+              ],
+              "estimated_minutes": 65,
+              "assessment": [
+                "algorithm_trace",
+                "pseudocode_exercise"
+              ]
+            },
+            {
+              "id": "complexity-analysis",
+              "title": "Algorithm Complexity and Big-O",
+              "summary": "Reason about how time and memory requirements grow.",
+              "objectives": [
+                "Distinguish constant, linear, and quadratic growth.",
+                "Estimate simple loop complexity.",
+                "Compare two approaches using asymptotic reasoning."
+              ],
+              "prerequisites": [
+                "algorithmic-thinking"
+              ],
+              "estimated_minutes": 70,
+              "assessment": [
+                "complexity_classification"
+              ]
+            },
+            {
+              "id": "core-data-structures",
+              "title": "Core Data Structures",
+              "summary": "Understand arrays/lists, stacks, queues, hash maps, and sets.",
+              "objectives": [
+                "Explain the behaviour of stacks and queues.",
+                "Choose between lists, sets, and dictionaries for a task.",
+                "Relate data-structure choice to operation costs."
+              ],
+              "prerequisites": [
+                "python-collections",
+                "complexity-analysis"
+              ],
+              "estimated_minutes": 85,
+              "assessment": [
+                "data_structure_selection",
+                "implementation_lab"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "software-engineering-practice",
+          "title": "Software Engineering Practice",
+          "description": "Learn the workflow and system concepts used to build dependable software.",
+          "lessons": [
+            {
+              "id": "git-and-version-control",
+              "title": "Git and Version Control",
+              "summary": "Track changes, create branches, and collaborate safely.",
+              "objectives": [
+                "Explain commits, branches, and remotes.",
+                "Use status, diff, log, add, commit, and push safely.",
+                "Describe how a pull request supports review."
+              ],
+              "prerequisites": [
+                "python-functions-and-modules"
+              ],
+              "estimated_minutes": 65,
+              "assessment": [
+                "git_workflow_lab"
+              ]
+            },
+            {
+              "id": "software-design-and-decomposition",
+              "title": "Software Design and Problem Decomposition",
+              "summary": "Separate responsibilities and design maintainable components.",
+              "objectives": [
+                "Decompose a small application into responsibilities.",
+                "Explain cohesion and coupling in practical terms.",
+                "Identify useful module and interface boundaries."
+              ],
+              "prerequisites": [
+                "python-functions-and-modules",
+                "algorithmic-thinking"
+              ],
+              "estimated_minutes": 70,
+              "assessment": [
+                "design_exercise"
+              ]
+            },
+            {
+              "id": "http-and-apis",
+              "title": "Networking Basics, HTTP, and APIs",
+              "summary": "Understand clients, servers, requests, responses, and API contracts.",
+              "objectives": [
+                "Describe client-server communication.",
+                "Distinguish common HTTP methods and status-code classes.",
+                "Read and construct a simple JSON API request and response."
+              ],
+              "prerequisites": [
+                "command-line-and-environments",
+                "software-design-and-decomposition"
+              ],
+              "estimated_minutes": 75,
+              "assessment": [
+                "http_contract_exercise"
+              ]
+            },
+            {
+              "id": "relational-databases",
+              "title": "Relational Databases and SQL Foundations",
+              "summary": "Model structured data and query it safely.",
+              "objectives": [
+                "Identify tables, rows, columns, and keys.",
+                "Explain primary and foreign keys.",
+                "Write basic SELECT, INSERT, UPDATE, and DELETE statements."
+              ],
+              "prerequisites": [
+                "python-collections",
+                "software-design-and-decomposition"
+              ],
+              "estimated_minutes": 80,
+              "assessment": [
+                "sql_query_lab"
+              ]
+            },
+            {
+              "id": "secure-development-basics",
+              "title": "Secure Development Foundations",
+              "summary": "Apply basic security thinking to inputs, secrets, and dependencies.",
+              "objectives": [
+                "Explain why inputs must be validated.",
+                "Distinguish authentication from authorization.",
+                "Describe safe secret handling and dependency updates."
+              ],
+              "prerequisites": [
+                "http-and-apis",
+                "relational-databases"
+              ],
+              "estimated_minutes": 60,
+              "assessment": [
+                "secure_design_review"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
