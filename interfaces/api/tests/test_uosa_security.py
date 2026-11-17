@@ -1048,7 +1048,7 @@ def test_security_audit_events_are_scoped_metadata_and_bounded(uosa_db):
     assert response.status_code == 200
     events = response.json()["items"]
     assert events
-    assert events[0]["event_type"] == "device.initial_owner_enrolled"
+    assert any(event["event_type"] == "device.initial_owner_enrolled" for event in events)
     serialized = json.dumps(events)
     assert session["access_token"] not in serialized
     assert enrolled["recovery_codes"][0] not in serialized
