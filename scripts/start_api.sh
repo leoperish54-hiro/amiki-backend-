@@ -34,6 +34,13 @@ if [ -z "${AMIKI_READ_TOKEN:-}" ] && [ -s "$CIPHER_READ_TOKEN_FILE" ]; then
     export AMIKI_READ_TOKEN="$(tr -d '\r\n' < "$CIPHER_READ_TOKEN_FILE")"
 fi
 
+# Load the dedicated Android/Core API bearer token. This credential is distinct
+# from the ALE owner-review, Cloud service, and Cipher service tokens.
+API_TOKEN_FILE="${AMIKI_API_TOKEN_FILE:-$HOME/.config/amiki/api-token}"
+if [ -z "${AMIKI_API_TOKEN:-}" ] && [ -s "$API_TOKEN_FILE" ]; then
+    export AMIKI_API_TOKEN="$(tr -d '\r\n' < "$API_TOKEN_FILE")"
+fi
+
 if curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null 2>&1; then
     exit 0
 fi

@@ -35,4 +35,4 @@ jobs:
       - name: Run API and security regression tests
         env:
           PYTHONPATH: .
-        run: pytest -q interfaces/api/tests/test_health.py interfaces/api/tests/test_code_executor.py interfaces/api/tests/test_workspace_subprocess_limits.py
+        run: pytest -q interfaces/api/tests/test_health.py interfaces/api/tests/test_api_auth.py interfaces/api/tests/test_code_executor.py interfaces/api/tests/test_workspace_subprocess_limits.py
