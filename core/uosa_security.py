@@ -1378,6 +1378,7 @@ def complete_session(*, challenge_id: str, signature_b64: str) -> dict[str, Any]
         now = _now()
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
+        scope_class = context.get("scope_class") or classify_scope_class(context["scopes"])
         ttl = SESSION_TTL_SECONDS if scope_class == "privileged" else GENERAL_ACCESS_TTL_SECONDS
         expires = now + ttl
         connection.execute(
