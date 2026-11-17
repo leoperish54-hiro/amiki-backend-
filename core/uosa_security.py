@@ -1377,7 +1377,7 @@ def compute_transaction_binding(method: str, path: str, body: bytes) -> str:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise UosaValidationError("Elevated owner actions require a valid JSON body.") from exc
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    material = f"{method.upper()}\\n{path}\\n{canonical}"
+    material = f"{method.upper()}\n{path}\n{canonical}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
