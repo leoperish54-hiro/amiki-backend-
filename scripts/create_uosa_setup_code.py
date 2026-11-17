@@ -2,7 +2,7 @@
 """Create a one-time UOSA first-owner setup code on this device.
 
 Run once from the Amiki backend repository:
-    python scripts/create_uosa_setup_code.py
+    .venv/bin/python scripts/create_uosa_setup_code.py
 
 Copy the displayed code directly into the Amiki first-device enrollment flow.
 It expires after 15 minutes and is deleted after successful enrollment. Never

@@ -28,7 +28,7 @@ L1 or L2 Core session as an L3 capability.
 2. From the backend repository root, run:
 
    ```sh
-   python scripts/create_uosa_setup_code.py
+   .venv/bin/python scripts/create_uosa_setup_code.py
    ```
 
 3. Copy the displayed one-time code directly into the first-device enrollment
