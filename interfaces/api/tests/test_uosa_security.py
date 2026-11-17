@@ -518,6 +518,31 @@ def _create_general_grant(owner_private, device_id, scopes, continuity_private=N
 
 
 
+
+def test_legacy_mixed_scope_sessions_fail_closed_after_session_class_rollout(uosa_db):
+    owner_private, owner_public = _keypair()
+    _enroll(owner_private, owner_public)
+    legacy_token = "legacy-mixed-session-token-for-rollout-test"
+    token_hash = hashlib.sha256(legacy_token.encode("utf-8")).hexdigest()
+    now = uosa_security._now()
+    with uosa_security._connection() as connection:
+        uosa_security._initialize(connection)
+        connection.execute(
+            "INSERT INTO uosa_sessions "
+            "(token_hash, device_id, audience, scopes_json, auth_level, created_at, "
+            "expires_at, device_generation) VALUES (?, ?, ?, ?, 'L1', ?, ?, 1)",
+            (
+                token_hash,
+                "test-device-1",
+                uosa_security.OWNER_AUDIENCE,
+                json.dumps(["chat.use", "ale.review.read"]),
+                now,
+                now + 900,
+            ),
+        )
+    assert uosa_security.get_session(legacy_token) is None
+
+
 def test_session_scope_classes_reject_mixed_capability_domains(uosa_db):
     owner_private, owner_public = _keypair()
     _enroll(owner_private, owner_public)
