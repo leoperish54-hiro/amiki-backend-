@@ -44,3 +44,6 @@ jobs:
           interfaces/api/tests/test_database.py
           interfaces/api/tests/test_uosa_core_route_guards.py
           interfaces/api/tests/test_system_state.py
+          interfaces/api/tests/test_cloud_autonomy_supervisor_events.py
+          interfaces/api/tests/test_cloud_monitoring.py
+          interfaces/api/tests/test_observability_api.py
