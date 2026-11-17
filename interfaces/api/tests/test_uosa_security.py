@@ -944,6 +944,9 @@ def test_recovery_rotates_codes_and_revokes_all_previous_devices_and_sessions(uo
     old_private, old_public = _keypair()
     first_enrollment = _enroll(old_private, old_public, "old-device")
     recovery_code = first_enrollment["recovery_codes"][0]
+    continuity_private, persistent_general = _create_general_grant(
+        old_private, "old-device", ["chat.use", "agents.run"]
+    )
     old_session = _issue_session(old_private, "old-device", ["ale.review.read"])
 
     second_private, second_public, _ = _add_device(
@@ -980,6 +983,11 @@ def test_recovery_rotates_codes_and_revokes_all_previous_devices_and_sessions(uo
 
     assert uosa_security.get_session(old_session["access_token"]) is None
     assert uosa_security.get_session(second_session["access_token"]) is None
+    assert uosa_security.get_session(persistent_general["access_token"]) is None
+    revoked_grant_refresh = client.post(
+        f"/api/v1/security/general-grants/{persistent_general['grant_id']}/refresh-challenges"
+    )
+    assert revoked_grant_refresh.status_code == 401
     devices = uosa_security.list_devices()
     active = [item for item in devices if item["active"]]
     assert [item["device_id"] for item in active] == ["replacement-device"]
