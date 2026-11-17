@@ -1475,6 +1475,15 @@ def create_general_grant_challenge(
             raise UosaAuthenticationError("The owner device is not enrolled or has been revoked.")
         if _fingerprint(bytes(device["public_key_der"])) == fingerprint:
             raise UosaConflictError("The continuity key must be separate from the biometric owner key.")
+        active_grant = connection.execute(
+            "SELECT 1 FROM uosa_general_grants WHERE device_id = ? "
+            "AND device_generation = ? AND revoked_at IS NULL",
+            (device_id, device["enrollment_generation"]),
+        ).fetchone()
+        if active_grant is not None:
+            raise UosaConflictError(
+                "This device already has an active general grant. Revoke it before registering another."
+            )
         duplicate = connection.execute(
             "SELECT 1 FROM uosa_general_grants WHERE continuity_key_fingerprint = ?",
             (fingerprint,),
@@ -1540,7 +1549,12 @@ def complete_general_grant(*, challenge_id: str, signature_b64: str) -> dict[str
             "SELECT 1 FROM uosa_general_grants WHERE continuity_key_fingerprint = ?",
             (context["continuity_key_fingerprint"],),
         ).fetchone()
-        if current is None or (
+        active_grant = connection.execute(
+            "SELECT 1 FROM uosa_general_grants WHERE device_id = ? "
+            "AND device_generation = ? AND revoked_at IS NULL",
+            (challenge["device_id"], context["enrollment_generation"]),
+        ).fetchone()
+        if current is None or active_grant is not None or (
             current["key_fingerprint"] != context["owner_key_fingerprint"]
             or current["enrollment_generation"] != context["enrollment_generation"]
         ) or duplicate is not None:
