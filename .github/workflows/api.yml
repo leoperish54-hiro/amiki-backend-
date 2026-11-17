@@ -1,0 +1,38 @@
+name: Amiki Backend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: interfaces/api/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r interfaces/api/requirements.txt
+      - name: Compile application modules
+        run: python -m compileall -q core interfaces
+      - name: Run API and security regression tests
+        env:
+          PYTHONPATH: .
+        run: pytest -q interfaces/api/tests/test_health.py interfaces/api/tests/test_code_executor.py interfaces/api/tests/test_workspace_subprocess_limits.py
