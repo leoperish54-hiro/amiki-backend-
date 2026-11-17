@@ -196,7 +196,7 @@ def _scope_for(method: str, path: str) -> str | None:
         return "cloud.monitor.read" if method == "GET" else None
     if route == "/cloud/monitor/events":
         return "cloud.monitor.read" if method == "GET" else None
-    if re.fullmatch(r"/cloud/monitor/events/\d+/acknowledge", route):
+    if re.fullmatch(r"/cloud/monitor/events/[^/]+/acknowledge", route):
         return "cloud.monitor.acknowledge" if method == "POST" else None
     if route == "/cloud/autonomy/worker/outbox/dead-letters":
         return "cloud.outbox.inspect" if method == "GET" else None
