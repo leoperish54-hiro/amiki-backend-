@@ -1908,7 +1908,7 @@ def get_session(token: str) -> dict[str, Any] | None:
             "scopes": json.loads(row["scopes_json"]),
             "auth_level": row["auth_level"],
             "created_at": row["created_at"],
-            "expires_at": row["expires_at"],
+            "expires_at": (row["expires_at"] if row["session_class"] == "privileged" else None),
             "transaction_hash": row["transaction_hash"],
             "single_use": bool(row["single_use"]),
             "device_generation": row["device_generation"],
