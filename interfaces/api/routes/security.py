@@ -108,6 +108,13 @@ class SessionChallengeInput(BaseModel):
     scopes: list[str] = Field(min_length=1, max_length=64)
 
 
+class GeneralGrantChallengeInput(BaseModel):
+    device_id: str = Field(min_length=1, max_length=80)
+    audience: Literal["amiki-core"] = "amiki-core"
+    scopes: list[str] = Field(min_length=1, max_length=64)
+    continuity_public_key: str = Field(min_length=1, max_length=8192)
+
+
 class ElevationChallengeInput(BaseModel):
     auth_level: Literal["L2"] = "L2"
     scope: str = Field(min_length=1, max_length=100)
@@ -219,6 +226,75 @@ def create_owner_session(payload: SignatureInput):
     except uosa_security.UosaError as error:
         _raise_uosa_error(error)
 
+
+
+
+@router.post("/security/general-grants/challenges")
+def issue_general_grant_challenge(
+    payload: GeneralGrantChallengeInput,
+    request: Request,
+):
+    client_key = request.client.host if request.client is not None else "unknown"
+    try:
+        return uosa_security.create_general_grant_challenge(
+            device_id=payload.device_id,
+            audience=payload.audience,
+            scopes=payload.scopes,
+            continuity_public_key_b64=payload.continuity_public_key,
+            client_key=client_key,
+        )
+    except uosa_security.UosaError as error:
+        _raise_uosa_error(error)
+
+
+@router.post("/security/general-grants")
+def complete_general_grant(payload: SignatureInput):
+    try:
+        return uosa_security.complete_general_grant(
+            challenge_id=payload.challenge_id,
+            signature_b64=payload.signature,
+        )
+    except uosa_security.UosaError as error:
+        _raise_uosa_error(error)
+
+
+@router.post("/security/general-grants/{grant_id}/refresh-challenges")
+def issue_general_grant_refresh_challenge(grant_id: str, request: Request):
+    client_key = request.client.host if request.client is not None else "unknown"
+    try:
+        return uosa_security.create_general_grant_refresh_challenge(
+            grant_id=grant_id,
+            client_key=client_key,
+        )
+    except uosa_security.UosaError as error:
+        _raise_uosa_error(error)
+
+
+@router.post("/security/general-grants/refresh")
+def complete_general_grant_refresh(payload: SignatureInput):
+    try:
+        return uosa_security.complete_general_grant_refresh(
+            challenge_id=payload.challenge_id,
+            signature_b64=payload.signature,
+        )
+    except uosa_security.UosaError as error:
+        _raise_uosa_error(error)
+
+
+@router.delete("/security/general-grants/current")
+def revoke_current_general_grant(
+    credentials: HTTPAuthorizationCredentials | None = Security(session_bearer),
+):
+    token = credentials.credentials if credentials else ""
+    try:
+        uosa_security.revoke_general_grant(token=token)
+        return {
+            "status": "revoked",
+            "session_class": "general",
+            "grant_persistent": False,
+        }
+    except uosa_security.UosaError as error:
+        _raise_uosa_error(error)
 
 
 @router.post("/security/elevation-challenges")
