@@ -491,7 +491,7 @@ def test_transaction_binding_uses_canonical_json_and_newline_separators():
     body = b'{"task_id":"t-1","action_type":"tap"}'
     canonical = '{"action_type":"tap","task_id":"t-1"}'
     expected = hashlib.sha256(
-        f"{method}\\n{path}\\n{canonical}".encode("utf-8")
+        f"{method}\n{path}\n{canonical}".encode("utf-8")
     ).hexdigest()
     assert uosa_security.compute_transaction_binding(method, path, body) == expected
 
