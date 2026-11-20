@@ -157,6 +157,7 @@ response. A rotation must be bound to the exact empty-body POST request.
 | `ale.progress.read` / `ale.progress.write` | L1 | Read/write lesson progress |
 | `ale.projects.read` / `ale.projects.write` | L1 | Read/write learning projects |
 | `ale.knowledge.read` | L1 | Read approved knowledge map |
+| `ale.knowledge.submit` | L1 | Submit owner learning notes and run bounded review-only consolidation |
 | `ale.claims.analyze` / `ale.claims.review` | L1 | Analyze claims and inspect evidence |
 | `ale.review.approve` / `ale.review.reject` | L2 | Approve/reject candidates |
 | `ale.claims.evaluate` / `ale.claims.extract` | L2 | Evaluate evidence and extract claims |
