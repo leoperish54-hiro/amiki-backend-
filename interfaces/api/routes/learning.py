@@ -50,6 +50,15 @@ class ClaimEvidenceEvaluationInput(BaseModel):
     max_sources: StrictInt = Field(default=5, ge=1, le=5)
 
 
+class LearningNoteInput(BaseModel):
+    topic: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=16000)
+
+
+class LearningConsolidationInput(BaseModel):
+    max_items: StrictInt = Field(default=10, ge=1, le=20)
+
+
 @router.get("/learning/curricula")
 def learning_curricula():
     """List all validated subject-independent curriculum packs."""
@@ -320,6 +329,44 @@ def extract_claims_from_knowledge(
         "count": len(claim_ids),
         "claim_ids": claim_ids,
     }
+
+
+@router.post(
+    "/learning/notes",
+    dependencies=[Depends(require_uosa_scope("ale.knowledge.submit"))],
+)
+def submit_owner_learning_note(payload: LearningNoteInput):
+    """Capture full owner-provided learning material as an unpromoted experience."""
+    try:
+        experience_id = learning_engine.submit_learning_note(
+            topic=payload.topic,
+            content=payload.content,
+        )
+    except learning_engine.LearningCapacityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "status": "recorded",
+        "experience_id": experience_id,
+        "topic": payload.topic,
+        "consolidation_state": "awaiting_cycle",
+        "auto_approved": False,
+    }
+
+
+@router.post(
+    "/learning/consolidation/run",
+    dependencies=[Depends(require_uosa_scope("ale.knowledge.submit"))],
+)
+def run_owner_learning_consolidation(payload: LearningConsolidationInput):
+    """Run one bounded, deterministic, review-first ALE consolidation batch."""
+    try:
+        return learning_engine.run_learning_consolidation_cycle(
+            max_items=payload.max_items,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/learning/review-queue", dependencies=[Depends(require_uosa_scope("ale.review.read"))])

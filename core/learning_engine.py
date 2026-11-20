@@ -291,6 +291,210 @@ def add_experience(content, source, outcome="observed", metadata=None):
     return record_id
 
 
+def submit_learning_note(topic, content):
+    """Capture an explicit owner learning note as a durable, unpromoted experience."""
+    if not LEARNING_ENABLED:
+        raise LearningStoreError("Learning is disabled.")
+    topic = _text(topic, "topic", 200)
+    content = _text(content, "content", 16000)
+    record_id = _id(
+        "exp",
+        json.dumps(["owner_learning_note", topic, content], ensure_ascii=False),
+    )
+    with _LOCK:
+        data = _load()
+        existing = next(
+            (item for item in data["experiences"] if item.get("id") == record_id),
+            None,
+        )
+        if existing is not None:
+            return record_id
+        _append_bounded(
+            data,
+            "experiences",
+            {
+                "id": record_id,
+                "kind": "owner_learning_note",
+                "topic": topic,
+                "content": content,
+                "source": "owner",
+                "outcome": "explicit_learning_note",
+                "metadata": {"capture_method": "explicit_owner_submission"},
+                "status": "recorded",
+                "created_at": _now(),
+                "consolidation": {"status": "awaiting_cycle"},
+            },
+            protected_statuses={"pending_review", "recorded"},
+        )
+        if not _save(data):
+            raise LearningStoreError("The owner learning note could not be persisted.")
+    return record_id
+
+
+def run_learning_consolidation_cycle(max_items=10):
+    """Create bounded, review-only knowledge proposals from owner learning notes.
+
+    The raw experience is retained unchanged. V1 deliberately copies the owner's
+    full note verbatim into a pending knowledge candidate; it does not ask a model
+    to rewrite, summarize, approve, or infer facts. The shared store lock makes
+    each batch atomic within the running Core process, and per-experience
+    checkpoints make repeated calls idempotent.
+    """
+    if isinstance(max_items, bool) or not isinstance(max_items, int) or not 1 <= max_items <= 20:
+        raise ValueError("max_items must be between 1 and 20")
+    if not LEARNING_ENABLED:
+        raise LearningStoreError("Learning is disabled.")
+
+    with _LOCK:
+        data = _load()
+        eligible = [
+            item for item in data["experiences"]
+            if item.get("kind") == "owner_learning_note"
+            and item.get("status") == "recorded"
+            and isinstance(item.get("consolidation"), dict)
+            and item["consolidation"].get("status") == "awaiting_cycle"
+        ]
+        if not eligible:
+            return {
+                "status": "no_candidates",
+                "cycle_id": None,
+                "processed_count": 0,
+                "created_count": 0,
+                "queued_count": 0,
+                "blocked_count": 0,
+                "remaining_count": 0,
+                "has_more": False,
+                "proposals": [],
+                "auto_approved": False,
+            }
+
+        selected = eligible[:max_items]
+        cycle_time = _now()
+        cycle_id = _id(
+            "cycle",
+            json.dumps(
+                [cycle_time, [item.get("id") for item in selected]],
+                ensure_ascii=False,
+            ),
+        )
+        proposals = []
+        created_count = 0
+        queued_count = 0
+        blocked_count = 0
+        capacity_reached = False
+
+        for experience in selected:
+            topic = _text(experience.get("topic"), "topic", 200)
+            content = _text(experience.get("content"), "content", 16000)
+            source = "owner-submitted learning note"
+            knowledge_id = _id(
+                "know",
+                json.dumps([topic, content, source], ensure_ascii=False),
+            )
+            existing = next(
+                (item for item in data["knowledge"] if item.get("id") == knowledge_id),
+                None,
+            )
+
+            if existing is not None and existing.get("status") == "rejected":
+                experience["consolidation"] = {
+                    "status": "blocked_by_prior_rejection",
+                    "cycle_id": cycle_id,
+                    "knowledge_id": knowledge_id,
+                    "processed_at": cycle_time,
+                }
+                blocked_count += 1
+                proposals.append({
+                    "experience_id": experience["id"],
+                    "knowledge_id": knowledge_id,
+                    "state": "blocked_by_prior_rejection",
+                })
+                continue
+
+            if existing is None:
+                evidence = [
+                    "capture_method: explicit_owner_submission",
+                    f"experience_id: {experience['id']}",
+                    f"captured_at: {experience.get('created_at', '')}",
+                    f"content_sha256: {hashlib.sha256(content.encode('utf-8')).hexdigest()}",
+                    f"consolidation_cycle_id: {cycle_id}",
+                ]
+                candidate = {
+                    "id": knowledge_id,
+                    "topic": topic,
+                    "content": content,
+                    "source": source,
+                    "evidence": evidence,
+                    "confidence": 0.5,
+                    "status": "pending_review",
+                    "created_at": cycle_time,
+                    "approved_at": None,
+                    "origin_experience_id": experience["id"],
+                }
+                try:
+                    _append_bounded(
+                        data,
+                        "knowledge",
+                        candidate,
+                        protected_statuses={"pending_review", "approved"},
+                    )
+                except LearningCapacityError:
+                    capacity_reached = True
+                    break
+                created_count += 1
+                existing = candidate
+
+            if existing.get("status") == "pending_review":
+                queued_count += 1
+                state = "queued_for_review"
+            elif existing.get("status") == "approved":
+                state = "already_approved"
+            else:
+                state = "linked_to_existing_record"
+
+            experience["consolidation"] = {
+                "status": state,
+                "cycle_id": cycle_id,
+                "knowledge_id": knowledge_id,
+                "processed_at": cycle_time,
+            }
+            proposals.append({
+                "experience_id": experience["id"],
+                "knowledge_id": knowledge_id,
+                "state": state,
+            })
+
+        processed_count = len(proposals)
+        if processed_count:
+            _save(data)
+
+        remaining_count = sum(
+            item.get("kind") == "owner_learning_note"
+            and item.get("status") == "recorded"
+            and isinstance(item.get("consolidation"), dict)
+            and item["consolidation"].get("status") == "awaiting_cycle"
+            for item in data["experiences"]
+        )
+        status = (
+            "capacity_reached"
+            if capacity_reached
+            else "completed" if processed_count else "no_candidates"
+        )
+        return {
+            "status": status,
+            "cycle_id": cycle_id,
+            "processed_count": processed_count,
+            "created_count": created_count,
+            "queued_count": queued_count,
+            "blocked_count": blocked_count,
+            "remaining_count": remaining_count,
+            "has_more": remaining_count > 0,
+            "proposals": proposals,
+            "auto_approved": False,
+            "mode": "verbatim_owner_note_to_review_queue",
+        }
+
+
 def propose_knowledge(topic, content, source, evidence=None, confidence=0.5):
     """Create a reviewable knowledge candidate. Evidence and provenance are retained."""
     topic = _text(topic, "topic", 200)
@@ -777,6 +981,18 @@ def get_learning_status():
         "autonomy": LEARNING_CONFIG.get("autonomy", "balanced"),
         "training": LEARNING_CONFIG.get("training", "hybrid"),
         "pending_experiences": sum(x.get("status") == "pending_review" for x in data["experiences"]),
+        "owner_learning_notes_awaiting_consolidation": sum(
+            item.get("kind") == "owner_learning_note"
+            and isinstance(item.get("consolidation"), dict)
+            and item["consolidation"].get("status") == "awaiting_cycle"
+            for item in data["experiences"]
+        ),
+        "owner_learning_notes_queued_for_review": sum(
+            item.get("kind") == "owner_learning_note"
+            and isinstance(item.get("consolidation"), dict)
+            and item["consolidation"].get("status") == "queued_for_review"
+            for item in data["experiences"]
+        ),
         "approved_knowledge": sum(x.get("status") == "approved" for x in data["knowledge"]),
         "pending_knowledge": sum(x.get("status") == "pending_review" for x in data["knowledge"]),
         "pending_claims": sum(x.get("status") == "pending_review" for x in data["claims"]),

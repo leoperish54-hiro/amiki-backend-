@@ -37,6 +37,8 @@ All paths below are under `/api/v1`.
 | `POST /learning/review-queue/{record_id}/approve` | `ale.review.approve` | L2 |
 | `POST /learning/review-queue/{record_id}/reject` | `ale.review.reject` | L2 |
 | `GET /learning/knowledge-map` | `ale.knowledge.read` | L1 |
+| `POST /learning/notes` | `ale.knowledge.submit` | L1 |
+| `POST /learning/consolidation/run` | `ale.knowledge.submit` | L1 |
 | `POST /learning/knowledge/{record_id}/extract-claims` | `ale.claims.extract` | L2 |
 | `GET /learning/claims/{claim_id}/evidence-assessment` | `ale.claims.review` | L1 |
 | `POST /learning/claims/{claim_id}/evidence-evaluation` | `ale.claims.evaluate` | L2 |
@@ -68,6 +70,37 @@ be promoted as knowledge. Approval makes the knowledge eligible for ALE retrieva
 
 Rejects a pending knowledge candidate or correction experience. Decisions cannot
 be repeated against already-reviewed records.
+
+### Explicit owner notes and the bounded consolidation cycle
+
+An owner can submit a complete note directly instead of relying on narrow
+conversational pattern matching:
+
+`POST /learning/notes`
+
+The note is stored verbatim as a durable episodic experience with its topic and
+capture provenance. It is not immediately promoted into usable knowledge.
+
+Run one bounded consolidation batch:
+
+`POST /learning/consolidation/run`
+
+The cycle processes at most 20 owner notes per call (default 10). V1 is
+deterministic: it copies each complete note into a pending knowledge candidate,
+links the candidate to the original experience ID, and records a content SHA-256
+digest and cycle checkpoint. It does not ask a model to rewrite or summarize owner
+content, delete source experiences, approve candidates, or update provider weights.
+
+The owner reviews resulting candidates through
+`GET /learning/review-queue?kind=knowledge`. Only a separate L2 approval makes a
+candidate eligible for retrieval. Repeated cycle calls do not duplicate an already
+checkpointed proposal. If the knowledge collection is full, the cycle stops without
+marking the unprocessed note as complete; it can be retried after capacity is freed.
+
+This is a first, owner-triggered consolidation step inspired by episodic-memory
+architectures. It is not a background scheduler or autonomous truth-verification
+system. The original experience remains intact, and externally sourced material
+still requires provenance and owner review.
 
 ## Enrollment and recovery
 
