@@ -59,6 +59,10 @@ def _scope_for(method: str, path: str) -> str | None:
         return "ale.claims.evaluate" if method == "POST" else None
     if re.fullmatch(r"/learning/knowledge/[^/]+/extract-claims", route):
         return "ale.claims.extract" if method == "POST" else None
+    if route == "/learning/notes":
+        return "ale.knowledge.submit" if method == "POST" else None
+    if route == "/learning/consolidation/run":
+        return "ale.knowledge.submit" if method == "POST" else None
     if route == "/learning/review-queue":
         return "ale.review.read" if method == "GET" else None
     if re.fullmatch(r"/learning/review-queue/[^/]+/approve", route):
