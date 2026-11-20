@@ -484,6 +484,17 @@ def _recover_owner_device(recovery_code, device_id):
     assert recovered.status_code == 200, recovered.text
     return new_private, new_public, recovered.json()
 
+def test_transaction_binding_uses_canonical_json_and_newline_separators():
+    method = "POST"
+    path = "/api/v1/device/ui-actions/authorize"
+    body = b'{"task_id":"t-1","action_type":"tap"}'
+    canonical = '{"action_type":"tap","task_id":"t-1"}'
+    expected = hashlib.sha256(
+        f"{method}\\n{path}\\n{canonical}".encode("utf-8")
+    ).hexdigest()
+    assert uosa_security.compute_transaction_binding(method, path, body) == expected
+
+
 def test_l2_elevation_is_transaction_bound_and_single_use(uosa_db):
     private_key, public_key = _keypair()
     _enroll(private_key, public_key)
