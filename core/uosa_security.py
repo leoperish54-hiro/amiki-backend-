@@ -45,6 +45,7 @@ L1_SCOPES = frozenset({
     "ale.projects.read",
     "ale.projects.write",
     "ale.knowledge.read",
+    "ale.knowledge.submit",
     "ale.claims.analyze",
     "ale.claims.review",
     "cloud.outbox.inspect",
