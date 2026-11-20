@@ -25,7 +25,8 @@ CHALLENGE_TTL_SECONDS = 120
 CHALLENGE_ISSUE_WINDOW_SECONDS = 300
 CHALLENGE_ISSUE_MAX_ATTEMPTS = 30
 CHALLENGE_ISSUE_LOCK_SECONDS = 120
-SESSION_TTL_SECONDS = 900
+SESSION_TTL_SECONDS = 900  # Privileged Cipher/ALE/Cloud sessions only.
+GENERAL_ACCESS_TTL_SECONDS = 300
 ELEVATED_SESSION_TTL_SECONDS = 120
 RECOVERY_CODE_COUNT = 10
 RECOVERY_CODE_TTL_SECONDS = 365 * 24 * 60 * 60
@@ -108,6 +109,7 @@ SCOPE_AUTH_LEVEL = {
 }
 AUTH_LEVEL_RANK = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
 DOMAIN = "AMIKI-UOSA-CHALLENGE-v1\n"
+PRIVILEGED_SCOPE_PREFIXES = ("cipher.", "ale.", "cloud.")
 
 
 class UosaError(ValueError):
@@ -142,6 +144,19 @@ class UosaConfigurationError(UosaError):
 
 def _now() -> int:
     return int(time.time())
+def classify_scope_class(scopes: list[str] | tuple[str, ...]) -> str:
+    """Classify a scope request; mixed privilege domains are rejected."""
+    normalized = set(scopes)
+    if not normalized or any(scope not in ALLOWED_SCOPES for scope in normalized):
+        raise UosaAuthorizationError("One or more requested owner scopes are not permitted.")
+    classes = {"privileged" if scope.startswith(PRIVILEGED_SCOPE_PREFIXES) else "general"
+               for scope in normalized}
+    if len(classes) != 1:
+        raise UosaAuthorizationError(
+            "General capabilities and Cipher/ALE/Cloud scopes must use separate sessions."
+        )
+    return next(iter(classes))
+
 
 
 def _database_path() -> Path:
@@ -225,6 +240,20 @@ def _initialize(connection: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_uosa_sessions_device
             ON uosa_sessions(device_id, expires_at);
+        CREATE TABLE IF NOT EXISTS uosa_general_grants (
+            grant_id TEXT PRIMARY KEY,
+            device_id TEXT NOT NULL,
+            audience TEXT NOT NULL,
+            scopes_json TEXT NOT NULL,
+            continuity_public_key_der BLOB NOT NULL,
+            continuity_key_fingerprint TEXT NOT NULL UNIQUE,
+            device_generation INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            last_used_at INTEGER,
+            revoked_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_uosa_general_grants_device
+            ON uosa_general_grants(device_id, device_generation, revoked_at);
         CREATE TABLE IF NOT EXISTS uosa_security_events (
             event_id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_type TEXT NOT NULL,
@@ -296,6 +325,8 @@ def _initialize(connection: sqlite3.Connection) -> None:
         )
     if "consumed_at" not in session_columns:
         connection.execute("ALTER TABLE uosa_sessions ADD COLUMN consumed_at INTEGER")
+    if "grant_id" not in session_columns:
+        connection.execute("ALTER TABLE uosa_sessions ADD COLUMN grant_id TEXT")
     connection.commit()
     try:
         os.chmod(_database_path(), 0o600)
@@ -1222,6 +1253,10 @@ def complete_recovery(
             (now,),
         )
         connection.execute(
+            "UPDATE uosa_general_grants SET revoked_at = ? WHERE revoked_at IS NULL",
+            (now,),
+        )
+        connection.execute(
             "UPDATE uosa_challenges SET consumed_at = ? "
             "WHERE consumed_at IS NULL AND expires_at > ?",
             (now, now),
@@ -1270,8 +1305,7 @@ def create_session_challenge(
     if not scopes or len(scopes) > len(ALLOWED_SCOPES):
         raise UosaValidationError("At least one valid owner scope is required.")
     normalized = sorted(set(scopes))
-    if any(scope not in ALLOWED_SCOPES for scope in normalized):
-        raise UosaAuthorizationError("One or more requested owner scopes are not permitted.")
+    scope_class = classify_scope_class(normalized)
     with _connection() as connection:
         _initialize(connection)
         connection.execute("BEGIN IMMEDIATE")
@@ -1292,6 +1326,7 @@ def create_session_challenge(
             context={
                 "audience": audience,
                 "scopes": normalized,
+                "scope_class": scope_class,
                 "enrollment_generation": device["enrollment_generation"],
                 "key_fingerprint": device["key_fingerprint"],
             },
@@ -1343,11 +1378,13 @@ def complete_session(*, challenge_id: str, signature_b64: str) -> dict[str, Any]
         now = _now()
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
-        expires = now + SESSION_TTL_SECONDS
+        scope_class = context.get("scope_class") or classify_scope_class(context["scopes"])
+        ttl = SESSION_TTL_SECONDS if scope_class == "privileged" else GENERAL_ACCESS_TTL_SECONDS
+        expires = now + ttl
         connection.execute(
             "INSERT INTO uosa_sessions "
             "(token_hash, device_id, audience, scopes_json, auth_level, created_at, "
-            "expires_at, device_generation) VALUES (?, ?, ?, ?, 'L1', ?, ?, ?)",
+            "expires_at, device_generation, grant_id) VALUES (?, ?, ?, ?, 'L1', ?, ?, ?, NULL)",
             (
                 token_hash, challenge["device_id"], context["audience"],
                 json.dumps(context["scopes"], sort_keys=True), now, expires,
@@ -1357,17 +1394,325 @@ def complete_session(*, challenge_id: str, signature_b64: str) -> dict[str, Any]
         _event(connection, "session.issued", challenge["device_id"], {
             "audience": context["audience"], "scopes": context["scopes"],
             "expires_at": expires,
+            "session_class": scope_class,
         })
         return {
             "access_token": token,
             "token_type": "Bearer",
             "expires_at": expires,
-            "expires_in_seconds": SESSION_TTL_SECONDS,
+            "expires_in_seconds": ttl,
             "audience": context["audience"],
             "scopes": context["scopes"],
             "auth_level": "L1",
+            "session_class": scope_class,
         }
 
+
+
+
+def _issue_general_access_token(
+    connection: sqlite3.Connection, *, device_id: str, audience: str,
+    scopes: list[str], device_generation: int, grant_id: str,
+) -> dict[str, Any]:
+    """Issue a five-minute bearer token attached to a persistent general grant."""
+    now = _now()
+    expires = now + GENERAL_ACCESS_TTL_SECONDS
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
+    connection.execute(
+        "INSERT INTO uosa_sessions "
+        "(token_hash, device_id, audience, scopes_json, auth_level, created_at, "
+        "expires_at, device_generation, grant_id) "
+        "VALUES (?, ?, ?, ?, 'L1', ?, ?, ?, ?)",
+        (token_hash, device_id, audience, json.dumps(scopes, sort_keys=True),
+         now, expires, device_generation, grant_id),
+    )
+    return {
+        "access_token": token,
+        "token_type": "Bearer",
+        "expires_at": expires,
+        "expires_in_seconds": GENERAL_ACCESS_TTL_SECONDS,
+        "audience": audience,
+        "scopes": scopes,
+        "auth_level": "L1",
+        "session_class": "general",
+        "grant_id": grant_id,
+        "grant_persistent": True,
+    }
+
+
+def create_general_grant_challenge(
+    *, device_id: str, audience: str, scopes: list[str],
+    continuity_public_key_b64: str, client_key: str,
+) -> dict[str, Any]:
+    """Bind a dedicated non-exportable continuity key to owner-approved general scopes."""
+    if audience != OWNER_AUDIENCE:
+        raise UosaAuthorizationError("The requested session audience is not permitted.")
+    normalized = sorted(set(scopes))
+    if not normalized or len(normalized) > len(ALLOWED_SCOPES):
+        raise UosaValidationError("At least one general owner scope is required.")
+    if classify_scope_class(normalized) != "general":
+        raise UosaAuthorizationError(
+            "Persistent general grants cannot contain Cipher, ALE, or Cloud scopes."
+        )
+    continuity_der = _decode_b64(continuity_public_key_b64, "continuity public key")
+    continuity_key = _load_p256_public_key(continuity_der)
+    canonical_der = continuity_key.public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    fingerprint = _fingerprint(canonical_der)
+    now = _now()
+    with _connection() as connection:
+        _initialize(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        device = connection.execute(
+            "SELECT key_fingerprint, enrollment_generation, public_key_der "
+            "FROM uosa_devices WHERE device_id = ? AND revoked_at IS NULL",
+            (device_id,),
+        ).fetchone()
+        if device is None:
+            raise UosaAuthenticationError("The owner device is not enrolled or has been revoked.")
+        if _fingerprint(bytes(device["public_key_der"])) == fingerprint:
+            raise UosaConflictError("The continuity key must be separate from the biometric owner key.")
+        active_grant = connection.execute(
+            "SELECT 1 FROM uosa_general_grants WHERE device_id = ? "
+            "AND device_generation = ? AND revoked_at IS NULL",
+            (device_id, device["enrollment_generation"]),
+        ).fetchone()
+        if active_grant is not None:
+            raise UosaConflictError(
+                "This device already has an active general grant. Revoke it before registering another."
+            )
+        duplicate = connection.execute(
+            "SELECT 1 FROM uosa_general_grants WHERE continuity_key_fingerprint = ?",
+            (fingerprint,),
+        ).fetchone()
+        if duplicate is not None:
+            raise UosaConflictError("This continuity key has already been registered.")
+        _check_challenge_issue_limit(connection, client_key, now)
+        challenge = _new_challenge(
+            connection,
+            purpose="general_grant",
+            device_id=device_id,
+            context={
+                "audience": audience,
+                "scopes": normalized,
+                "continuity_public_key_der": base64.b64encode(canonical_der).decode("ascii"),
+                "continuity_key_fingerprint": fingerprint,
+                "enrollment_generation": device["enrollment_generation"],
+                "owner_key_fingerprint": device["key_fingerprint"],
+            },
+            audience=audience,
+            scopes=normalized,
+            key_fingerprint=device["key_fingerprint"],
+            enrollment_generation=device["enrollment_generation"],
+            replacement_key_fingerprint=fingerprint,
+        )
+        _event(connection, "general_grant.challenge_issued", device_id, {
+            "scopes": normalized, "continuity_key_fingerprint": fingerprint,
+        })
+        return challenge
+
+
+def complete_general_grant(*, challenge_id: str, signature_b64: str) -> dict[str, Any]:
+    """Complete biometric approval and issue the first short-lived general token."""
+    with _connection() as connection:
+        _initialize(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        challenge = _consume_challenge(connection, challenge_id, "general_grant")
+        connection.commit()
+        context = json.loads(challenge["context_json"])
+        device = connection.execute(
+            "SELECT public_key_der, key_fingerprint, enrollment_generation "
+            "FROM uosa_devices WHERE device_id = ? AND revoked_at IS NULL",
+            (challenge["device_id"],),
+        ).fetchone()
+        if device is None or (
+            device["key_fingerprint"] != context["owner_key_fingerprint"]
+            or device["enrollment_generation"] != context["enrollment_generation"]
+        ):
+            raise UosaAuthenticationError("The owner device enrollment has changed.")
+        _verify_signature(bytes(device["public_key_der"]), challenge["message"], signature_b64)
+        continuity_der = _decode_b64(
+            context["continuity_public_key_der"], "stored continuity public key"
+        )
+        if _fingerprint(continuity_der) != context["continuity_key_fingerprint"]:
+            raise UosaAuthenticationError("The continuity-key binding is invalid.")
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute(
+            "SELECT key_fingerprint, enrollment_generation FROM uosa_devices "
+            "WHERE device_id = ? AND revoked_at IS NULL",
+            (challenge["device_id"],),
+        ).fetchone()
+        duplicate = connection.execute(
+            "SELECT 1 FROM uosa_general_grants WHERE continuity_key_fingerprint = ?",
+            (context["continuity_key_fingerprint"],),
+        ).fetchone()
+        active_grant = connection.execute(
+            "SELECT 1 FROM uosa_general_grants WHERE device_id = ? "
+            "AND device_generation = ? AND revoked_at IS NULL",
+            (challenge["device_id"], context["enrollment_generation"]),
+        ).fetchone()
+        if current is None or active_grant is not None or (
+            current["key_fingerprint"] != context["owner_key_fingerprint"]
+            or current["enrollment_generation"] != context["enrollment_generation"]
+        ) or duplicate is not None:
+            raise UosaAuthenticationError("The owner device or continuity-key state changed.")
+        grant_id = secrets.token_urlsafe(32)
+        now = _now()
+        connection.execute(
+            "INSERT INTO uosa_general_grants "
+            "(grant_id, device_id, audience, scopes_json, continuity_public_key_der, "
+            "continuity_key_fingerprint, device_generation, created_at, last_used_at, revoked_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            (grant_id, challenge["device_id"], context["audience"],
+             json.dumps(context["scopes"], sort_keys=True), continuity_der,
+             context["continuity_key_fingerprint"], context["enrollment_generation"], now, now),
+        )
+        issued = _issue_general_access_token(
+            connection, device_id=challenge["device_id"], audience=context["audience"],
+            scopes=context["scopes"], device_generation=context["enrollment_generation"],
+            grant_id=grant_id,
+        )
+        _event(connection, "general_grant.created", challenge["device_id"], {
+            "grant_id_hash": hashlib.sha256(grant_id.encode("ascii")).hexdigest(),
+            "scopes": context["scopes"],
+            "continuity_key_fingerprint": context["continuity_key_fingerprint"],
+        })
+        return issued
+
+
+def create_general_grant_refresh_challenge(
+    *, grant_id: str, client_key: str,
+) -> dict[str, Any]:
+    """Issue a one-use challenge to be signed by the registered continuity key."""
+    if not grant_id or len(grant_id) > 128:
+        raise UosaAuthenticationError("The general authorization grant is not active.")
+    now = _now()
+    with _connection() as connection:
+        _initialize(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        grant = connection.execute(
+            "SELECT g.device_id, g.audience, g.scopes_json, g.continuity_key_fingerprint, "
+            "g.device_generation, d.enrollment_generation FROM uosa_general_grants AS g "
+            "JOIN uosa_devices AS d ON d.device_id = g.device_id "
+            "WHERE g.grant_id = ? AND g.revoked_at IS NULL AND d.revoked_at IS NULL "
+            "AND d.enrollment_generation = g.device_generation",
+            (grant_id,),
+        ).fetchone()
+        if grant is None:
+            raise UosaAuthenticationError("The general authorization grant is not active.")
+        _check_challenge_issue_limit(connection, client_key, now)
+        scopes = json.loads(grant["scopes_json"])
+        challenge = _new_challenge(
+            connection, purpose="general_grant_refresh", device_id=grant["device_id"],
+            context={
+                "grant_id": grant_id, "audience": grant["audience"], "scopes": scopes,
+                "device_generation": grant["device_generation"],
+                "continuity_key_fingerprint": grant["continuity_key_fingerprint"],
+            },
+            audience=grant["audience"], scopes=scopes,
+            key_fingerprint=grant["continuity_key_fingerprint"],
+            enrollment_generation=grant["device_generation"],
+        )
+        _event(connection, "general_grant.refresh_challenge_issued", grant["device_id"], {
+            "grant_id_hash": hashlib.sha256(grant_id.encode("ascii")).hexdigest(),
+        })
+        return challenge
+
+
+def complete_general_grant_refresh(
+    *, challenge_id: str, signature_b64: str,
+) -> dict[str, Any]:
+    """Verify continuity-key possession and issue another short-lived general token."""
+    with _connection() as connection:
+        _initialize(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        challenge = _consume_challenge(connection, challenge_id, "general_grant_refresh")
+        connection.commit()
+        context = json.loads(challenge["context_json"])
+        grant = connection.execute(
+            "SELECT g.device_id, g.audience, g.scopes_json, g.continuity_public_key_der, "
+            "g.continuity_key_fingerprint, g.device_generation, d.enrollment_generation, "
+            "d.revoked_at AS device_revoked_at FROM uosa_general_grants AS g "
+            "JOIN uosa_devices AS d ON d.device_id = g.device_id "
+            "WHERE g.grant_id = ? AND g.revoked_at IS NULL",
+            (context["grant_id"],),
+        ).fetchone()
+        if grant is None or grant["device_revoked_at"] is not None:
+            raise UosaAuthenticationError("The general authorization grant is not active.")
+        if (
+            grant["device_generation"] != context["device_generation"]
+            or grant["enrollment_generation"] != context["device_generation"]
+            or grant["continuity_key_fingerprint"] != context["continuity_key_fingerprint"]
+            or grant["audience"] != context["audience"]
+            or json.loads(grant["scopes_json"]) != context["scopes"]
+        ):
+            raise UosaAuthenticationError("The general authorization grant changed.")
+        continuity_der = bytes(grant["continuity_public_key_der"])
+        if _fingerprint(continuity_der) != context["continuity_key_fingerprint"]:
+            raise UosaAuthenticationError("The registered continuity key is invalid.")
+        _verify_signature(continuity_der, challenge["message"], signature_b64)
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute(
+            "SELECT g.device_id, g.audience, g.scopes_json, g.continuity_key_fingerprint, "
+            "g.device_generation, d.enrollment_generation FROM uosa_general_grants AS g "
+            "JOIN uosa_devices AS d ON d.device_id = g.device_id "
+            "WHERE g.grant_id = ? AND g.revoked_at IS NULL AND d.revoked_at IS NULL",
+            (context["grant_id"],),
+        ).fetchone()
+        if current is None or (
+            current["device_generation"] != context["device_generation"]
+            or current["enrollment_generation"] != context["device_generation"]
+            or current["continuity_key_fingerprint"] != context["continuity_key_fingerprint"]
+        ):
+            raise UosaAuthenticationError("The general authorization grant was revoked during refresh.")
+        scopes = json.loads(current["scopes_json"])
+        if classify_scope_class(scopes) != "general":
+            raise UosaAuthorizationError("Persistent general grants cannot authorize privileged scopes.")
+        now = _now()
+        connection.execute(
+            "UPDATE uosa_general_grants SET last_used_at = ? "
+            "WHERE grant_id = ? AND revoked_at IS NULL",
+            (now, context["grant_id"]),
+        )
+        issued = _issue_general_access_token(
+            connection, device_id=current["device_id"], audience=current["audience"],
+            scopes=scopes, device_generation=current["device_generation"],
+            grant_id=context["grant_id"],
+        )
+        _event(connection, "general_grant.refreshed", current["device_id"], {
+            "grant_id_hash": hashlib.sha256(context["grant_id"].encode("ascii")).hexdigest(),
+        })
+        return issued
+
+
+def revoke_general_grant(*, token: str) -> bool:
+    """Revoke the persistent grant represented by the caller's active general token."""
+    session = get_session(token)
+    if session is None or session["grant_id"] is None:
+        return False
+    with _connection() as connection:
+        _initialize(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        now = _now()
+        changed = connection.execute(
+            "UPDATE uosa_general_grants SET revoked_at = ? "
+            "WHERE grant_id = ? AND device_id = ? AND revoked_at IS NULL",
+            (now, session["grant_id"], session["device_id"]),
+        )
+        if changed.rowcount != 1:
+            return False
+        connection.execute(
+            "UPDATE uosa_sessions SET revoked_at = ? "
+            "WHERE grant_id = ? AND revoked_at IS NULL",
+            (now, session["grant_id"]),
+        )
+        _event(connection, "general_grant.revoked", session["device_id"], {
+            "grant_id_hash": hashlib.sha256(session["grant_id"].encode("ascii")).hexdigest(),
+        })
+        return True
 
 
 def compute_transaction_binding(method: str, path: str, body: bytes) -> str:
@@ -1377,7 +1722,7 @@ def compute_transaction_binding(method: str, path: str, body: bytes) -> str:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise UosaValidationError("Elevated owner actions require a valid JSON body.") from exc
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    material = f"{method.upper()}\\n{path}\\n{canonical}"
+    material = f"{method.upper()}\n{path}\n{canonical}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
@@ -1424,6 +1769,7 @@ def create_elevation_challenge(
                 "scopes": [scope],
                 "transaction_hash": transaction_hash,
                 "base_token_hash": token_hash,
+                "base_grant_id": session.get("grant_id"),
                 "enrollment_generation": device["enrollment_generation"],
                 "key_fingerprint": device["key_fingerprint"],
             },
@@ -1462,12 +1808,20 @@ def complete_elevation(*, challenge_id: str, signature_b64: str) -> dict[str, An
         ):
             raise UosaAuthenticationError("The owner device enrollment has changed.")
         base = connection.execute(
-            "SELECT 1 FROM uosa_sessions WHERE token_hash = ? AND revoked_at IS NULL "
+            "SELECT grant_id FROM uosa_sessions WHERE token_hash = ? AND revoked_at IS NULL "
             "AND consumed_at IS NULL AND expires_at > ?",
             (context["base_token_hash"], _now()),
         ).fetchone()
-        if base is None:
+        if base is None or base["grant_id"] != context.get("base_grant_id"):
             raise UosaAuthenticationError("The base owner session is no longer active.")
+        if context.get("base_grant_id") is not None:
+            grant_active = connection.execute(
+                "SELECT 1 FROM uosa_general_grants WHERE grant_id = ? "
+                "AND device_id = ? AND revoked_at IS NULL",
+                (context["base_grant_id"], challenge["device_id"]),
+            ).fetchone()
+            if grant_active is None:
+                raise UosaAuthenticationError("The parent general authorization grant is no longer active.")
         _verify_signature(bytes(device["public_key_der"]), challenge["message"], signature_b64)
         connection.execute("BEGIN IMMEDIATE")
         current_device = connection.execute(
@@ -1479,11 +1833,23 @@ def complete_elevation(*, challenge_id: str, signature_b64: str) -> dict[str, An
             ),
         ).fetchone()
         current_base = connection.execute(
-            "SELECT 1 FROM uosa_sessions WHERE token_hash = ? AND revoked_at IS NULL "
+            "SELECT grant_id FROM uosa_sessions WHERE token_hash = ? AND revoked_at IS NULL "
             "AND consumed_at IS NULL AND expires_at > ?",
             (context["base_token_hash"], _now()),
         ).fetchone()
-        if current_device is None or current_base is None:
+        current_grant = None
+        if context.get("base_grant_id") is not None:
+            current_grant = connection.execute(
+                "SELECT 1 FROM uosa_general_grants WHERE grant_id = ? "
+                "AND device_id = ? AND revoked_at IS NULL",
+                (context["base_grant_id"], challenge["device_id"]),
+            ).fetchone()
+        if (
+            current_device is None
+            or current_base is None
+            or current_base["grant_id"] != context.get("base_grant_id")
+            or (context.get("base_grant_id") is not None and current_grant is None)
+        ):
             raise UosaAuthenticationError(
                 "The device or base session changed during elevation."
             )
@@ -1494,13 +1860,13 @@ def complete_elevation(*, challenge_id: str, signature_b64: str) -> dict[str, An
         connection.execute(
             "INSERT INTO uosa_sessions "
             "(token_hash, device_id, audience, scopes_json, auth_level, created_at, "
-            "expires_at, device_generation, transaction_hash, single_use) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            "expires_at, device_generation, transaction_hash, single_use, grant_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
             (
                 token_hash, challenge["device_id"], context["audience"],
                 json.dumps(context["scopes"], sort_keys=True), context["auth_level"],
                 now, expires, context["enrollment_generation"],
-                context["transaction_hash"],
+                context["transaction_hash"], context.get("base_grant_id"),
             ),
         )
         _event(connection, "session.elevated", challenge["device_id"], {
@@ -1532,12 +1898,16 @@ def consume_elevated_session(token: str, scope: str, transaction_hash: str) -> b
         connection.execute("BEGIN IMMEDIATE")
         row = connection.execute(
             "SELECT s.device_id, s.scopes_json, s.auth_level, s.transaction_hash, "
-            "s.single_use FROM uosa_sessions AS s "
+            "s.single_use, s.grant_id FROM uosa_sessions AS s "
             "JOIN uosa_devices AS d ON d.device_id = s.device_id "
             "AND d.revoked_at IS NULL "
             "AND d.enrollment_generation = s.device_generation "
             "WHERE s.token_hash = ? AND s.revoked_at IS NULL "
-            "AND s.consumed_at IS NULL AND s.expires_at > ?",
+            "AND s.consumed_at IS NULL AND s.expires_at > ? "
+            "AND (s.grant_id IS NULL OR EXISTS ("
+            "SELECT 1 FROM uosa_general_grants AS g WHERE g.grant_id = s.grant_id "
+            "AND g.device_id = s.device_id AND g.device_generation = s.device_generation "
+            "AND g.revoked_at IS NULL))",
             (token_hash, _now()),
         ).fetchone()
         if row is None or row["auth_level"] != "L2" or not row["single_use"]:
@@ -1576,26 +1946,40 @@ def get_session(token: str) -> dict[str, Any] | None:
         row = connection.execute(
             "SELECT s.device_id, s.audience, s.scopes_json, s.auth_level, "
             "s.created_at, s.expires_at, s.transaction_hash, s.single_use, "
-            "s.consumed_at, s.device_generation FROM uosa_sessions AS s "
+            "s.consumed_at, s.device_generation, s.grant_id FROM uosa_sessions AS s "
             "JOIN uosa_devices AS d ON d.device_id = s.device_id "
             "AND d.revoked_at IS NULL "
             "AND d.enrollment_generation = s.device_generation "
             "WHERE s.token_hash = ? AND s.revoked_at IS NULL "
-            "AND s.consumed_at IS NULL AND s.expires_at > ?",
+            "AND s.consumed_at IS NULL AND s.expires_at > ? "
+            "AND (s.grant_id IS NULL OR EXISTS ("
+            "SELECT 1 FROM uosa_general_grants AS g WHERE g.grant_id = s.grant_id "
+            "AND g.device_id = s.device_id AND g.device_generation = s.device_generation "
+            "AND g.revoked_at IS NULL))",
             (token_hash, _now()),
         ).fetchone()
         if row is None:
             return None
+        scopes = json.loads(row["scopes_json"])
+        try:
+            session_class = classify_scope_class(scopes)
+        except UosaAuthorizationError:
+            # Legacy mixed-scope sessions are invalidated immediately after rollout.
+            return None
+        if row["grant_id"] is not None and session_class != "general":
+            return None
         return {
             "device_id": row["device_id"],
             "audience": row["audience"],
-            "scopes": json.loads(row["scopes_json"]),
+            "scopes": scopes,
             "auth_level": row["auth_level"],
             "created_at": row["created_at"],
             "expires_at": row["expires_at"],
             "transaction_hash": row["transaction_hash"],
             "single_use": bool(row["single_use"]),
             "device_generation": row["device_generation"],
+            "grant_id": row["grant_id"],
+            "session_class": session_class,
         }
 
 
@@ -1829,6 +2213,11 @@ def complete_key_rotation(
             (now, device_id),
         )
         connection.execute(
+            "UPDATE uosa_general_grants SET revoked_at = ? "
+            "WHERE device_id = ? AND revoked_at IS NULL",
+            (now, device_id),
+        )
+        connection.execute(
             "UPDATE uosa_challenges SET consumed_at = ? "
             "WHERE device_id = ? AND consumed_at IS NULL AND expires_at > ?",
             (now, device_id, now),
@@ -1861,6 +2250,11 @@ def revoke_device(device_id: str) -> bool:
         if cursor.rowcount:
             connection.execute(
                 "UPDATE uosa_sessions SET revoked_at = ? "
+                "WHERE device_id = ? AND revoked_at IS NULL",
+                (now, device_id),
+            )
+            connection.execute(
+                "UPDATE uosa_general_grants SET revoked_at = ? "
                 "WHERE device_id = ? AND revoked_at IS NULL",
                 (now, device_id),
             )
