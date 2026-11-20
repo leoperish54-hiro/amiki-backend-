@@ -42,6 +42,7 @@ jobs:
           interfaces/api/tests/test_workspace_subprocess_limits.py
           interfaces/api/tests/test_uosa_security.py
           interfaces/api/tests/test_uosa_general_grants.py
+          interfaces/api/tests/test_learning_consolidation.py
           interfaces/api/tests/test_database.py
           interfaces/api/tests/test_uosa_core_route_guards.py
           interfaces/api/tests/test_security_agent.py
