@@ -10,11 +10,10 @@ import argparse
 import hashlib
 import hmac
 import json
-import os
-import secrets
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import URLError
@@ -48,6 +47,8 @@ ASSETS = {
 }
 CHUNK_SIZE = 64 * 1024
 MAX_ATTEMPTS = 3
+PROVISION_TIMEOUT_SECONDS = 20 * 60
+NETWORK_READ_TIMEOUT_SECONDS = 20
 
 
 def sha256_file(path: Path) -> str:
@@ -68,16 +69,23 @@ def verify_asset(path: Path, name: str) -> bool:
         return False
 
 
-def download_asset(name: str, destination: Path) -> None:
+def download_asset(
+    name: str, destination: Path, deadline: float | None = None
+) -> None:
     expected_size, expected_hash = ASSETS[name]
     destination.parent.mkdir(parents=True, exist_ok=True)
     if verify_asset(destination, name):
         return
+    if deadline is None:
+        deadline = time.monotonic() + PROVISION_TIMEOUT_SECONDS
 
     last_error: Exception | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         temporary_name: str | None = None
         try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("The shared model provisioning deadline expired.")
             request = Request(
                 MODEL_BASE_URL + name + "?download=true",
                 headers={
@@ -87,7 +95,9 @@ def download_asset(name: str, destination: Path) -> None:
             )
             digest = hashlib.sha256()
             received = 0
-            with urlopen(request, timeout=90) as response:
+            with urlopen(
+                request, timeout=min(NETWORK_READ_TIMEOUT_SECONDS, remaining)
+            ) as response:
                 if response.status != 200:
                     raise OSError(f"Unexpected model host HTTP status {response.status}.")
                 with tempfile.NamedTemporaryFile(
@@ -96,6 +106,10 @@ def download_asset(name: str, destination: Path) -> None:
                 ) as output:
                     temporary_name = output.name
                     while received < expected_size:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(
+                                "The shared model provisioning deadline expired."
+                            )
                         chunk = response.read(min(CHUNK_SIZE, expected_size - received))
                         if not chunk:
                             break
@@ -116,6 +130,8 @@ def download_asset(name: str, destination: Path) -> None:
             return
         except (OSError, URLError, TimeoutError) as error:
             last_error = error
+            if time.monotonic() >= deadline:
+                break
         finally:
             if temporary_name:
                 try:
@@ -125,9 +141,14 @@ def download_asset(name: str, destination: Path) -> None:
     raise RuntimeError(f"Could not provision pinned model asset {name}: {last_error}")
 
 
-def provision_model(directory: Path) -> None:
+def provision_model(
+    directory: Path, timeout_seconds: float = PROVISION_TIMEOUT_SECONDS
+) -> None:
+    if timeout_seconds <= 0:
+        raise ValueError("The model provisioning timeout must be positive.")
+    deadline = time.monotonic() + timeout_seconds
     for name in ASSETS:
-        download_asset(name, directory / name)
+        download_asset(name, directory / name, deadline)
 
 
 def make_handler(directory: Path, token: str):
@@ -213,7 +234,12 @@ def make_handler(directory: Path, token: str):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--token", required=True, help="Per-install random bearer token")
+    token_group = parser.add_mutually_exclusive_group(required=True)
+    token_group.add_argument("--token", help="Per-install random bearer token")
+    token_group.add_argument(
+        "--token-stdin", action="store_true",
+        help="Read the per-install bearer token from standard input",
+    )
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument(
         "--model-dir",
@@ -221,15 +247,16 @@ def main(argv: list[str] | None = None) -> int:
         default=Path.home() / ".local/share/amiki/hey-amiki-model",
     )
     args = parser.parse_args(argv)
-    if len(args.token) < 32 or not all(c in "0123456789abcdefABCDEF" for c in args.token):
-        parser.error("--token must be at least 32 hexadecimal characters")
+    token = sys.stdin.readline().strip() if args.token_stdin else args.token
+    if len(token) != 64 or not all(c in "0123456789abcdef" for c in token):
+        parser.error("the bearer token must be exactly 64 lowercase hexadecimal characters")
     if not 1024 <= args.port <= 65535:
         parser.error("--port must be between 1024 and 65535")
 
     try:
         provision_model(args.model_dir)
         server = ThreadingHTTPServer(
-            ("127.0.0.1", args.port), make_handler(args.model_dir, args.token)
+            ("127.0.0.1", args.port), make_handler(args.model_dir, token)
         )
     except Exception as error:
         print(f"Amiki model bridge startup failed: {type(error).__name__}: {error}", file=sys.stderr)
