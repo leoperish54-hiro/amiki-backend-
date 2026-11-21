@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import socket
 import tempfile
 import threading
 import urllib.error
@@ -138,3 +139,29 @@ def test_provision_model_enforces_one_shared_deadline(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="deadline"):
         bridge.provision_model(tmp_path, timeout_seconds=0.001)
     assert network_calls == []
+
+
+def test_receive_token_from_authenticated_abstract_socket():
+    socket_name = "amiki-wake-word-" + "c" * 32
+    token = "d" * 64
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind("\0" + socket_name)
+    listener.listen(1)
+
+    def send_token():
+        connection, _address = listener.accept()
+        with connection:
+            connection.sendall((token + "\n").encode("ascii"))
+
+    sender = threading.Thread(target=send_token, daemon=True)
+    sender.start()
+    try:
+        assert bridge.receive_token_from_socket(socket_name) == token
+    finally:
+        listener.close()
+        sender.join(timeout=2)
+
+
+def test_receive_token_rejects_untrusted_socket_name():
+    with pytest.raises(ValueError, match="socket name"):
+        bridge.receive_token_from_socket("../../not-a-socket")
