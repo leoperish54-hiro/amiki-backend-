@@ -14,6 +14,7 @@ import os
 import secrets
 import sys
 import tempfile
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import URLError
@@ -151,6 +152,16 @@ def make_handler(directory: Path, token: str):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
+        def do_POST(self) -> None:
+            if not self._authorized():
+                self._json(401, {"status": "unauthorized"})
+                return
+            if self.path != "/v1/shutdown":
+                self._json(404, {"status": "not_found"})
+                return
+            self._json(200, {"status": "stopping"})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
 
         def do_GET(self) -> None:
             if not self._authorized():
