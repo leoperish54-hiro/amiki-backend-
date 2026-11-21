@@ -10,6 +10,8 @@ import argparse
 import hashlib
 import hmac
 import json
+import re
+import socket
 import sys
 import tempfile
 import threading
@@ -151,6 +153,29 @@ def provision_model(
         download_asset(name, directory / name, deadline)
 
 
+
+def receive_token_from_socket(socket_name: str) -> str:
+    """Receive the bearer token over a local socket; never place it in argv or logs."""
+    if not re.fullmatch(r"amiki-wake-word-[0-9a-f]{32}", socket_name):
+        raise ValueError("Invalid Amiki bootstrap socket name.")
+
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(15)
+    try:
+        # Android LocalServerSocket names live in Linux's abstract namespace.
+        client.connect("\0" + socket_name)
+        with client.makefile("rb") as stream:
+            line = stream.readline(66)
+        if len(line) != 65 or not line.endswith(b"\n"):
+            raise ValueError("The Amiki bootstrap socket returned an invalid token frame.")
+        token = line[:-1].decode("ascii")
+        if not re.fullmatch(r"[0-9a-f]{64}", token):
+            raise ValueError("The Amiki bootstrap socket returned an invalid bearer token.")
+        return token
+    finally:
+        client.close()
+
+
 def make_handler(directory: Path, token: str):
     class Handler(BaseHTTPRequestHandler):
         server_version = "AmikiModelBridge/1"
@@ -234,11 +259,9 @@ def make_handler(directory: Path, token: str):
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    token_group = parser.add_mutually_exclusive_group(required=True)
-    token_group.add_argument("--token", help="Per-install random bearer token")
-    token_group.add_argument(
-        "--token-stdin", action="store_true",
-        help="Read the per-install bearer token from standard input",
+    parser.add_argument(
+        "--token-socket", required=True,
+        help="Short-lived Android abstract Unix-domain socket for UID-authenticated token handoff",
     )
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument(
@@ -247,13 +270,11 @@ def main(argv: list[str] | None = None) -> int:
         default=Path.home() / ".local/share/amiki/hey-amiki-model",
     )
     args = parser.parse_args(argv)
-    token = sys.stdin.readline().strip() if args.token_stdin else args.token
-    if len(token) != 64 or not all(c in "0123456789abcdef" for c in token):
-        parser.error("the bearer token must be exactly 64 lowercase hexadecimal characters")
     if not 1024 <= args.port <= 65535:
         parser.error("--port must be between 1024 and 65535")
 
     try:
+        token = receive_token_from_socket(args.token_socket)
         provision_model(args.model_dir)
         server = ThreadingHTTPServer(
             ("127.0.0.1", args.port), make_handler(args.model_dir, token)
