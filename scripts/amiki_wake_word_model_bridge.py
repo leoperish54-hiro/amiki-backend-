@@ -214,7 +214,7 @@ def make_handler(directory: Path, token: str):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--token", required=True, help="Per-install random bearer token")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=8766)
     parser.add_argument(
         "--model-dir",
         type=Path,
