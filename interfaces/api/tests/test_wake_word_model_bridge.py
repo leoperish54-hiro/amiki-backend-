@@ -9,6 +9,8 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from scripts import amiki_wake_word_model_bridge as bridge
 
 
@@ -23,7 +25,7 @@ def test_asset_manifest_contains_only_pinned_assets():
 
 def test_verify_asset_requires_exact_size_and_sha256(tmp_path):
     name = "sample"
-    bridge.ASSETS[name] = (4, hashlib.sha256(b"model").hexdigest())
+    bridge.ASSETS[name] = (len(b"model"), hashlib.sha256(b"model").hexdigest())
     try:
         target = tmp_path / name
         target.write_bytes(b"model")
@@ -121,3 +123,18 @@ def test_provision_model_reuses_valid_cached_assets(tmp_path, monkeypatch):
     finally:
         bridge.ASSETS.clear()
         bridge.ASSETS.update(original)
+
+
+def test_provision_model_enforces_one_shared_deadline(tmp_path, monkeypatch):
+    network_calls = []
+
+    def unexpected_network(_request, timeout=0):
+        network_calls.append(timeout)
+        raise AssertionError("expired provisioning must not start a network request")
+
+    ticks = iter((100.0, 100.01, 100.02))
+    monkeypatch.setattr(bridge.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(bridge, "urlopen", unexpected_network)
+    with pytest.raises(RuntimeError, match="deadline"):
+        bridge.provision_model(tmp_path, timeout_seconds=0.001)
+    assert network_calls == []
