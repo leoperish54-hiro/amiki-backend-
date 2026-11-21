@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import socket
 import tempfile
@@ -165,3 +166,36 @@ def test_receive_token_from_authenticated_abstract_socket():
 def test_receive_token_rejects_untrusted_socket_name():
     with pytest.raises(ValueError, match="socket name"):
         bridge.receive_token_from_socket("../../not-a-socket")
+
+
+def test_download_asset_writes_and_atomically_publishes_verified_file(tmp_path, monkeypatch):
+    name = "fixture-model.bin"
+    payload = b"verified-model-payload"
+    original = bridge.ASSETS.get(name)
+    bridge.ASSETS[name] = (len(payload), hashlib.sha256(payload).hexdigest())
+
+    class FakeResponse(io.BytesIO):
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def fake_urlopen(_request, timeout=0):
+        assert timeout > 0
+        return FakeResponse(payload)
+
+    monkeypatch.setattr(bridge, "urlopen", fake_urlopen)
+    destination = tmp_path / name
+    try:
+        bridge.download_asset(name, destination)
+        assert destination.read_bytes() == payload
+        assert bridge.verify_asset(destination, name)
+        assert list(tmp_path.glob("*.part")) == []
+    finally:
+        if original is None:
+            bridge.ASSETS.pop(name, None)
+        else:
+            bridge.ASSETS[name] = original

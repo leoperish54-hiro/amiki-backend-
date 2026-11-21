@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import os
 import re
 import socket
 import sys
