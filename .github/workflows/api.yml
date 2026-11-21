@@ -44,3 +44,4 @@ jobs:
           interfaces/api/tests/test_database.py
           interfaces/api/tests/test_uosa_core_route_guards.py
           interfaces/api/tests/test_system_state.py
+          interfaces/api/tests/test_wake_word_model_bridge.py
