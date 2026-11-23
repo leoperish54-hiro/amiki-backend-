@@ -142,30 +142,39 @@ def test_provision_model_enforces_one_shared_deadline(tmp_path, monkeypatch):
     assert network_calls == []
 
 
-def test_receive_token_from_authenticated_abstract_socket():
-    socket_name = "amiki-wake-word-" + "c" * 32
+def test_receive_token_from_authenticated_loopback_tcp():
+    session = "c" * 64
     token = "d" * 64
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind("\0" + socket_name)
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
     listener.listen(1)
 
     def send_token():
         connection, _address = listener.accept()
         with connection:
+            received = b""
+            while not received.endswith(b"\n"):
+                chunk = connection.recv(1)
+                if not chunk:
+                    break
+                received += chunk
+            assert received == (session + "\n").encode("ascii")
             connection.sendall((token + "\n").encode("ascii"))
 
     sender = threading.Thread(target=send_token, daemon=True)
     sender.start()
     try:
-        assert bridge.receive_token_from_socket(socket_name) == token
+        assert bridge.receive_token_from_tcp(listener.getsockname()[1], session) == token
     finally:
         listener.close()
         sender.join(timeout=2)
 
 
-def test_receive_token_rejects_untrusted_socket_name():
-    with pytest.raises(ValueError, match="socket name"):
-        bridge.receive_token_from_socket("../../not-a-socket")
+def test_receive_token_rejects_invalid_tcp_session_and_port():
+    with pytest.raises(ValueError, match="session challenge"):
+        bridge.receive_token_from_tcp(8765, "not-a-session")
+    with pytest.raises(ValueError, match="handoff port"):
+        bridge.receive_token_from_tcp(80, "e" * 64)
 
 
 def test_download_asset_writes_and_atomically_publishes_verified_file(tmp_path, monkeypatch):

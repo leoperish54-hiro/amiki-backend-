@@ -155,23 +155,24 @@ def provision_model(
 
 
 
-def receive_token_from_socket(socket_name: str) -> str:
-    """Receive the bearer token over a local socket; never place it in argv or logs."""
-    if not re.fullmatch(r"amiki-wake-word-[0-9a-f]{32}", socket_name):
-        raise ValueError("Invalid Amiki bootstrap socket name.")
+def receive_token_from_tcp(port: int, session: str) -> str:
+    """Receive the bearer token through a one-use loopback challenge."""
+    if not re.fullmatch(r"[0-9a-f]{64}", session):
+        raise ValueError("Invalid Amiki handoff session challenge.")
+    if not 1024 <= port <= 65535:
+        raise ValueError("Invalid Amiki handoff port.")
 
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(15)
+    client = socket.create_connection(("127.0.0.1", port), timeout=15)
     try:
-        # Android LocalServerSocket names live in Linux's abstract namespace.
-        client.connect("\0" + socket_name)
+        client.sendall(session.encode("ascii") + b"\n")
+        client.settimeout(15)
         with client.makefile("rb") as stream:
             line = stream.readline(66)
         if len(line) != 65 or not line.endswith(b"\n"):
-            raise ValueError("The Amiki bootstrap socket returned an invalid token frame.")
+            raise ValueError("The Amiki handoff server returned an invalid token frame.")
         token = line[:-1].decode("ascii")
         if not re.fullmatch(r"[0-9a-f]{64}", token):
-            raise ValueError("The Amiki bootstrap socket returned an invalid bearer token.")
+            raise ValueError("The Amiki handoff server returned an invalid bearer token.")
         return token
     finally:
         client.close()
@@ -261,8 +262,12 @@ def make_handler(directory: Path, token: str):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--token-socket", required=True,
-        help="Short-lived Android abstract Unix-domain socket for UID-authenticated token handoff",
+        "--token-handoff-port", type=int, required=True,
+        help="Amiki's loopback TCP port for the persistent one-use token handoff",
+    )
+    parser.add_argument(
+        "--token-handoff-session", required=True,
+        help="One-use handoff challenge; not the Amiki bridge bearer token",
     )
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument(
@@ -275,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--port must be between 1024 and 65535")
 
     try:
-        token = receive_token_from_socket(args.token_socket)
+        token = receive_token_from_tcp(args.token_handoff_port, args.token_handoff_session)
         provision_model(args.model_dir)
         server = ThreadingHTTPServer(
             ("127.0.0.1", args.port), make_handler(args.model_dir, token)
