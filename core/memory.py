@@ -41,14 +41,14 @@ def _now():
 
 
 def _database_path():
-    # Keep the path patchable for isolated tests and alternate installations.
+    # Keep legacy-file overrides patchable for isolated tests and alternate installations.
+    default_legacy = os.path.join(BASE_DIR, "memory/persistent_memory.json")
+    if os.path.abspath(LONG_TERM_FILE) != os.path.abspath(default_legacy):
+        return str(Path(LONG_TERM_FILE).with_suffix(".sqlite3"))
     configured = MEMORY_CONFIG.get("database_file")
     if configured:
         return os.path.join(BASE_DIR, configured)
-    if SQLITE_FILE != os.path.join(BASE_DIR, "memory/persistent_memory.sqlite3"):
-        return SQLITE_FILE
-    legacy = Path(LONG_TERM_FILE)
-    return str(legacy.with_suffix(".sqlite3"))
+    return str(Path(LONG_TERM_FILE).with_suffix(".sqlite3"))
 
 
 def _validate_fact_fields(category, key, value):
