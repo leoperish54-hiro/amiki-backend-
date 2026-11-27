@@ -1,6 +1,6 @@
 """Transactional, temporal persistent memory backed by SQLite.
 
-The legacy JSON file is imported once and retained untouched as a recovery copy.
+The legacy JSON file is imported once and retained as a recovery copy.
 SQLite is the source of truth after migration.
 """
 import json
@@ -78,6 +78,7 @@ def _validate_memory(document):
 def _connect():
     path = _database_path()
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    connection = None
     try:
         connection = sqlite3.connect(
             path,
@@ -99,6 +100,8 @@ def _connect():
                 pass
         return connection
     except (sqlite3.Error, OSError) as exc:
+        if connection is not None:
+            connection.close()
         raise MemoryStoreError("Persistent memory database is unavailable.") from exc
 
 
@@ -151,6 +154,11 @@ def _initialize_schema(connection):
         ON memory_events(category, fact_key, occurred_at);
         """
     )
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    if version == 0:
+        connection.execute("PRAGMA user_version = 1")
+    elif version != 1:
+        raise sqlite3.DatabaseError("Unsupported persistent memory schema version.")
 
 
 @contextmanager
@@ -621,7 +629,8 @@ def clear_memory():
         return
     now = _now()
     # Explicit owner-authorized clearing is also the documented recovery
-    # path for an unreadable legacy JSON file. Preserve that file untouched.
+    # path for an unreadable legacy JSON file. Sanitize the old copy after
+    # the SQLite transaction commits so forgotten facts cannot be re-imported.
     connection = _connect()
     try:
         try:

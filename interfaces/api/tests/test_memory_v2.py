@@ -117,6 +117,7 @@ def test_sqlite_database_uses_wal_and_restrictive_permissions(tmp_path, monkeypa
     connection = sqlite3.connect(path)
     try:
         assert connection.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
     finally:
         connection.close()
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
