@@ -501,3 +501,20 @@ def test_read_error_is_not_reported_as_empty_memory(memory_file, monkeypatch):
 
     with pytest.raises(memory.MemoryStoreError, match="could not be read"):
         memory.load_memory()
+
+
+
+def test_manager_reports_false_when_write_does_not_persist(monkeypatch):
+    import core.memory_manager as manager
+
+    monkeypatch.setattr(memory, "MEMORY_ENABLED", True)
+    monkeypatch.setattr(manager, "get_memory", lambda *_args: [])
+    monkeypatch.setattr(manager, "add_memory", lambda *_args: None)
+
+    assert manager.remember("personal_fact", "preferred_name", "Morgan") is False
+
+
+def test_manager_does_not_claim_remember_success_when_storage_is_disabled(monkeypatch):
+    monkeypatch.setattr(memory, "MEMORY_ENABLED", False)
+
+    assert remember("personal_fact", "preferred_name", "Morgan") is False
