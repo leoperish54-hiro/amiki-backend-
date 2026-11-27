@@ -1,4 +1,5 @@
 from core import memory as memory_store
+from core.memory import add_memory, get_memory, delete_memory
 
 
 PERSISTENT_CATEGORIES = {
@@ -32,12 +33,12 @@ def remember(category, key, value):
     if not _non_empty_text(key) or not _non_empty_text(value):
         return False
 
-    existing = memory_store.get_memory(category, key)
+    existing = get_memory(category, key)
     if any(fact.get("value") == value for fact in existing):
         return True
 
-    memory_store.add_memory(category, key, value)
-    persisted = memory_store.get_memory(category, key)
+    add_memory(category, key, value)
+    persisted = get_memory(category, key)
     return any(fact.get("value") == value for fact in persisted)
 
 
@@ -54,7 +55,7 @@ def forget(category, key):
     if not is_persistent_category(category) or not _non_empty_text(key):
         return False
 
-    memory_store.delete_memory(category, key)
+    delete_memory(category, key)
     return True
 
 
@@ -64,7 +65,7 @@ def recall(category=None, key=None):
         return []
     if key is not None and not _non_empty_text(key):
         return []
-    return memory_store.get_memory(category, key)
+    return get_memory(category, key)
 
 
 def should_remember(category):
