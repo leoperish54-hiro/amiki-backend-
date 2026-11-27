@@ -491,6 +491,8 @@ def get_memory_history(category=None, key=None, limit=100):
 
 
 def get_memory_events(category=None, key=None, limit=100):
+    if not MEMORY_ENABLED:
+        return []
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 1000:
         raise ValueError("Event limit must be between 1 and 1000.")
     connection = _open_store()
