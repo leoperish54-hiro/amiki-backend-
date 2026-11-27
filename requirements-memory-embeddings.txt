@@ -1,0 +1,2 @@
+# Optional local semantic memory retrieval. Install only when enabled in config.json.
+fastembed>=0.7,<1
