@@ -411,3 +411,93 @@ def test_exact_memory_key_suppresses_weaker_partial_matches():
     results = retrieve_memories("What is my favorite anime?", facts)
 
     assert [fact["key"] for fact in results] == ["favorite_anime"]
+
+
+
+def test_extractor_preserves_existing_name_and_anime_contracts():
+    assert extract_memories("My name is Morgan.") == [
+        {
+            "category": "personal_fact",
+            "key": "name",
+            "value": "Morgan",
+            "operation": "remember",
+        }
+    ]
+    assert extract_memories("My favorite anime is Example Series.") == [
+        {
+            "category": "preference",
+            "key": "favorite_anime",
+            "value": "Example Series",
+            "operation": "remember",
+        }
+    ]
+
+
+def test_extractor_preserves_existing_correction_and_preference_contracts():
+    assert extract_memories(
+        "My favorite anime used to be Example Series, but now it's Another Series."
+    ) == [
+        {
+            "category": "preference",
+            "key": "favorite_anime",
+            "value": "Another Series",
+            "operation": "remember",
+        }
+    ]
+    assert extract_memories("I prefer Python over Java.") == [
+        {
+            "category": "preference",
+            "key": "preferred_programming_language",
+            "value": "Python",
+            "operation": "remember",
+        }
+    ]
+
+
+def test_extractor_preserves_explicit_like_and_forget_contracts():
+    assert extract_memories("I like sleeping.") == [
+        {
+            "category": "preference",
+            "key": "likes",
+            "value": "sleeping",
+            "operation": "remember",
+        }
+    ]
+    assert extract_memories("I like this song.") == []
+    assert extract_memories("Forget my favorite anime.") == [
+        {
+            "category": "preference",
+            "key": "favorite_anime",
+            "value": None,
+            "operation": "forget",
+        }
+    ]
+    assert extract_memories("I don't have a favorite anime anymore.") == [
+        {
+            "category": "preference",
+            "key": "favorite_anime",
+            "value": None,
+            "operation": "forget",
+        }
+    ]
+
+
+def test_extractor_does_not_promote_temporary_activity_to_preference():
+    assert extract_memories("I'm watching Example Series right now.") == []
+
+
+def test_read_error_is_not_reported_as_empty_memory(memory_file, monkeypatch):
+    import builtins
+
+    original_open = builtins.open
+
+    def fail_memory_read(path, *args, **kwargs):
+        if str(path) == str(memory_file):
+            raise PermissionError("private path must not be exposed")
+        return original_open(path, *args, **kwargs)
+
+    write_json(memory_file, {"facts": []})
+    monkeypatch.setattr(builtins, "open", fail_memory_read)
+
+    with pytest.raises(memory.MemoryStoreError, match="could not be read"):
+        memory.load_memory()
