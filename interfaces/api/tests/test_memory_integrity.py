@@ -188,3 +188,27 @@ def test_memory_diagnostic_reports_corruption_without_raw_file_content(memory_fi
 
     assert check["status"] == "error"
     assert "do-not-expose" not in check["detail"]
+
+def test_chat_memory_capture_does_not_fail_when_store_is_corrupt(memory_file):
+    from core.router import process_memory_candidates
+
+    damaged = '{"facts": ['
+    memory_file.write_text(damaged, encoding="utf-8")
+
+    processed = process_memory_candidates(
+        "Please remember that my favorite car is a Supra."
+    )
+
+    assert processed == []
+    assert memory_file.read_text(encoding="utf-8") == damaged
+
+
+def test_context_marks_corrupt_memory_unavailable_not_empty(memory_file):
+    from core.context_manager import build_context
+
+    memory_file.write_text('{"facts": "damaged"}', encoding="utf-8")
+
+    context = build_context("Hello.")
+
+    assert context["memory_status"] == "unavailable"
+    assert context["memories"] == []
