@@ -212,3 +212,88 @@ def test_context_marks_corrupt_memory_unavailable_not_empty(memory_file):
 
     assert context["memory_status"] == "unavailable"
     assert context["memories"] == []
+
+
+
+def test_metadata_survives_add_and_delete_operations(memory_file):
+    original = {
+        "schema_version": 1,
+        "owner_scope": "local",
+        "facts": [
+            {
+                "category": "preference",
+                "key": "favorite_vehicle",
+                "value": "coupe",
+                "provenance": {"kind": "explicit"},
+            }
+        ],
+    }
+    write_json(memory_file, original)
+
+    memory.add_memory("preference", "response_style", "concise answers")
+    after_add = memory.load_memory()
+    assert after_add["schema_version"] == 1
+    assert after_add["owner_scope"] == "local"
+    assert after_add["facts"][0]["provenance"] == {"kind": "explicit"}
+
+    memory.delete_memory("preference", "response_style")
+    after_delete = memory.load_memory()
+    assert after_delete["schema_version"] == 1
+    assert after_delete["owner_scope"] == "local"
+    assert after_delete["facts"] == original["facts"]
+
+
+def test_missing_facts_field_is_not_silently_migrated(memory_file):
+    write_json(memory_file, {"schema_version": 1})
+
+    with pytest.raises(memory.MemoryStoreError):
+        memory.load_memory()
+
+
+def test_invalid_utf8_store_is_reported_without_data_loss(memory_file):
+    damaged = b'{"facts": []}\xff'
+    memory_file.write_bytes(damaged)
+
+    with pytest.raises(memory.MemoryStoreError):
+        memory.load_memory()
+
+    assert memory_file.read_bytes() == damaged
+
+
+def test_manager_remember_update_and_forget_round_trip(memory_file):
+    assert remember("preference", "favorite_vehicle", "coupe") is True
+    assert remember("preference", "favorite_vehicle", "sedan") is True
+    assert memory.get_memory("preference", "favorite_vehicle") == [
+        {"category": "preference", "key": "favorite_vehicle", "value": "sedan"}
+    ]
+
+    assert forget("preference", "favorite_vehicle") is True
+    assert memory.get_memory("preference", "favorite_vehicle") == []
+
+
+def test_extractor_recognizes_explicit_interest_and_crowd_preference():
+    interest = extract_memories("I'm really into cars, especially the Supra.")
+    crowd = extract_memories("I don't like being in huge crowds.")
+
+    assert {
+        "category": "preference",
+        "key": "interests",
+        "value": "cars, especially the Supra",
+        "operation": "remember",
+    } in interest
+    assert {
+        "category": "preference",
+        "key": "dislikes_large_crowds",
+        "value": "dislikes large crowds",
+        "operation": "remember",
+    } in crowd
+
+
+def test_retrieval_finds_interest_and_style_preferences():
+    facts = [
+        {"category": "preference", "key": "interests", "value": "cars and space"},
+        {"category": "preference", "key": "response_style", "value": "concise explanations"},
+    ]
+
+    assert retrieve_memories("What are my interests?", facts)[0]["key"] == "interests"
+    assert retrieve_memories("How do I prefer explanations?", facts)[0]["key"] == "response_style"
