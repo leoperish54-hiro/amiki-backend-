@@ -242,7 +242,10 @@ def test_metadata_survives_add_and_delete_operations(memory_file):
     after_add = memory.load_memory()
     assert after_add["schema_version"] == 1
     assert after_add["owner_scope"] == "local"
-    assert after_add["facts"][0]["provenance"]["kind"] == "explicit"
+    original_fact = next(
+        fact for fact in after_add["facts"] if fact["key"] == "favorite_vehicle"
+    )
+    assert original_fact["provenance"]["kind"] == "explicit"
 
     memory.delete_memory("preference", "response_style")
     after_delete = memory.load_memory()
