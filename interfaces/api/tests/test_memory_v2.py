@@ -193,3 +193,62 @@ def test_forgetting_is_a_temporal_event_not_physical_deletion(tmp_path, monkeypa
     history = memory.get_memory_history("preference", "favorite_vehicle")
     assert history[0]["status"] == "forgotten"
     assert memory.get_memory_events("preference", "favorite_vehicle")[0]["event_type"] == "forgotten"
+
+
+def test_prompt_uses_confidence_and_capture_provenance_without_raw_source_text(monkeypatch):
+    from core import prompt
+
+    monkeypatch.setattr(prompt, "_active_learning_project", lambda *_args: None)
+    monkeypatch.setattr(prompt, "get_relevant_knowledge", lambda *_args: [])
+    monkeypatch.setattr(prompt, "build_self_knowledge_contract", lambda: {})
+
+    context = {
+        "memories": [
+            {
+                "category": "personal_fact",
+                "key": "field_of_study",
+                "value": "Software Engineering",
+                "confidence": 0.93,
+                "source_type": "user_conversation",
+                "extraction_method": "explicit_pattern",
+                "provenance": {
+                    "source_text": "PRIVATE ORIGINAL STATEMENT",
+                    "correlation_id": "private-correlation-123",
+                    "capture_mode": "explicit_pattern_extraction",
+                },
+            }
+        ],
+        "memory_status": "available",
+        "conversation": [],
+    }
+
+    rendered = prompt.build_prompt("What am I studying?", _context=context)
+
+    assert "confidence: 0.93 (heuristic)" in rendered
+    assert "source: user_conversation" in rendered
+    assert "extraction: explicit_pattern" in rendered
+    assert "not a calibrated probability" in rendered
+    assert "PRIVATE ORIGINAL STATEMENT" not in rendered
+    assert "private-correlation-123" not in rendered
+
+
+def test_model_request_preserves_the_selected_conversation_exchange(monkeypatch):
+    from core import context_manager, prompt
+
+    history = [
+        {"role": "user", "text": "Can you improve persistent memory safely?"},
+        {"role": "assistant", "text": "I would audit storage, retrieval, and prompt construction."},
+    ]
+    monkeypatch.setattr(context_manager, "load_context", lambda **_kwargs: list(history))
+    monkeypatch.setattr(context_manager, "get_memory", lambda: [])
+    monkeypatch.setattr(prompt, "_active_learning_project", lambda *_args: None)
+    monkeypatch.setattr(prompt, "get_relevant_knowledge", lambda *_args: [])
+    monkeypatch.setattr(prompt, "build_self_knowledge_contract", lambda: {})
+
+    request = prompt.build_model_request("Let's do it")
+
+    assert [item.role for item in request.messages] == ["user", "assistant", "user"]
+    assert request.messages[0].content == history[0]["text"]
+    assert request.messages[1].content == history[1]["text"]
+    assert request.messages[2].content == "Let's do it"
+    assert "Outcome: CONTINUE" in request.context
