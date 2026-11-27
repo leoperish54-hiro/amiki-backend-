@@ -44,10 +44,6 @@ def remember(
     if not _non_empty_text(key) or not _non_empty_text(value):
         return False
 
-    existing = get_memory(category, key)
-    if any(fact.get("value") == value for fact in existing):
-        return True
-
     add_memory(
         category,
         key,
