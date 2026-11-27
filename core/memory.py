@@ -440,18 +440,21 @@ def get_memory(category=None, key=None, *, include_history=False):
             missing = [row for row in rows if not row["embedding_json"]]
             if missing:
                 from core.memory_embeddings import embed_text
-                with _transaction(connection):
-                    for row in missing:
-                        vector = embed_text(
-                            f"{row['category']}: {row['fact_key']}. {row['value']}"
+                vectors = []
+                for row in missing:
+                    vector = embed_text(
+                        f"{row['category']}: {row['fact_key']}. {row['value']}"
+                    )
+                    if vector is not None:
+                        vectors.append((json.dumps(vector), row["id"]))
+                if vectors:
+                    with _transaction(connection):
+                        connection.executemany(
+                            "UPDATE memory_facts SET embedding_json=? WHERE id=?",
+                            vectors,
                         )
-                        if vector is not None:
-                            connection.execute(
-                                "UPDATE memory_facts SET embedding_json=? WHERE id=?",
-                                (json.dumps(vector), row["id"]),
-                            )
-                refreshed = connection.execute(query, params).fetchall()
-                facts = [_row_to_fact(row) for row in refreshed]
+                    refreshed = connection.execute(query, params).fetchall()
+                    facts = [_row_to_fact(row) for row in refreshed]
         return facts
     except sqlite3.Error as exc:
         raise MemoryStoreError("Persistent memory could not be read safely.") from exc
