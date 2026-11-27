@@ -508,7 +508,7 @@ def get_memory_history(category=None, key=None, limit=100):
             params.append(key)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
-        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         return [_row_to_fact(row) for row in connection.execute(query, params).fetchall()]
     except sqlite3.Error as exc:
