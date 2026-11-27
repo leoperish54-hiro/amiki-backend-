@@ -46,7 +46,9 @@ MEMORY_QUERY_ALIASES = {
     "field_of_study": (
         "field of study", "degree", "major", "program of study",
         "course of study", "what i study", "what degree i pursue",
-        "my degree", "my major", "what program i am in",
+        "academic programme", "academic program", "degree programme",
+        "degree program", "academic path", "my degree", "my major",
+        "what program i am in",
     ),
     "education_plan": (
         "education plan", "what i plan to study", "where i plan to study",
