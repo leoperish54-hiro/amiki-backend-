@@ -40,10 +40,28 @@ def analyse_memory_clusters(memories, *, duplicate_threshold=0.96, related_thres
                 "similarity": round(similarity, 4),
             }
 
+            left_key = set(_normalise(left.get("key", "")).split())
+            right_key = set(_normalise(right.get("key", "")).split())
+            key_overlap = (
+                len(left_key & right_key) / max(len(left_key | right_key), 1)
+            )
+            same_category = left.get("category") == right.get("category")
+
             if same_key and not same_value:
                 contradictions.append({**pair, "reason": "same_key_different_values"})
-            elif same_value or (similarity >= duplicate_threshold and similarity > 0):
+            elif same_value:
                 duplicates.append({**pair, "reason": "equivalent_fact"})
+            elif (
+                same_category
+                and similarity >= duplicate_threshold
+                and key_overlap >= 0.25
+            ):
+                contradictions.append({
+                    **pair,
+                    "reason": "high_semantic_overlap_different_values",
+                })
+            elif similarity >= duplicate_threshold and similarity > 0:
+                duplicates.append({**pair, "reason": "possible_semantic_duplicate"})
             elif similarity >= related_threshold:
                 related.append({**pair, "reason": "semantic_similarity"})
 
