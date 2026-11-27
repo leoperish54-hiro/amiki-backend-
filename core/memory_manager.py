@@ -18,7 +18,18 @@ def is_persistent_category(category):
     return isinstance(category, str) and category in PERSISTENT_CATEGORIES
 
 
-def remember(category, key, value):
+def remember(
+    category,
+    key,
+    value,
+    *,
+    provenance=None,
+    confidence=0.9,
+    source_text=None,
+    source_type="explicit_user_statement",
+    extraction_method="pattern",
+    correlation_id=None,
+):
     """
     Store or update a validated long-term fact.
 
@@ -37,7 +48,17 @@ def remember(category, key, value):
     if any(fact.get("value") == value for fact in existing):
         return True
 
-    add_memory(category, key, value)
+    add_memory(
+        category,
+        key,
+        value,
+        provenance=provenance,
+        confidence=confidence,
+        source_text=source_text,
+        source_type=source_type,
+        extraction_method=extraction_method,
+        correlation_id=correlation_id,
+    )
     persisted = get_memory(category, key)
     return any(fact.get("value") == value for fact in persisted)
 
