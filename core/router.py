@@ -55,7 +55,20 @@ def process_memory_candidates(message, correlation_id=None):
 
         if decision == "remember":
             try:
-                succeeded = remember(category, key, value)
+                succeeded = remember(
+                    category,
+                    key,
+                    value,
+                    provenance={
+                        "source_type": "user_conversation",
+                        "capture_mode": "explicit_pattern_extraction",
+                    },
+                    confidence=0.90,
+                    source_text=message,
+                    source_type="user_conversation",
+                    extraction_method="pattern",
+                    correlation_id=correlation_id,
+                )
             except (MemoryStoreError, OSError):
                 _emit_memory_unavailable(correlation_id)
                 continue
