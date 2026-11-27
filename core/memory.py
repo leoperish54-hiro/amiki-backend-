@@ -641,23 +641,24 @@ def clear_memory():
                     "INSERT OR REPLACE INTO memory_meta(key,value) VALUES('legacy_json_imported','true')"
                 )
         with _transaction(connection):
-            rows = connection.execute(
-                "SELECT * FROM memory_facts WHERE status='active'"
-            ).fetchall()
-            for row in rows:
-                connection.execute(
-                    "UPDATE memory_facts SET status='forgotten', valid_to=?, updated_at=? WHERE id=?",
-                    (now, now, row["id"]),
-                )
-                connection.execute(
-                    """INSERT INTO memory_events
-                    (fact_id,event_type,category,fact_key,old_value,provenance_json,occurred_at)
-                    VALUES (?,'forgotten',?,?,?, ?,?)""",
-                    (
-                        row["id"], row["category"], row["fact_key"], row["value"],
-                        row["provenance_json"], now,
-                    ),
-                )
+            # "Clear all memory" is intentionally stronger than forgetting one
+            # fact: remove historical values and evidence, retaining only a
+            # non-content audit event that the owner explicitly cleared the store.
+            connection.execute("DELETE FROM memory_events")
+            connection.execute("UPDATE memory_facts SET superseded_by=NULL")
+            connection.execute("DELETE FROM memory_facts")
+            connection.execute(
+                "DELETE FROM memory_meta WHERE key='legacy_document_metadata'"
+            )
+            connection.execute(
+                """INSERT INTO memory_events
+                (event_type,category,fact_key,provenance_json,occurred_at)
+                VALUES ('store_cleared','system','*',?,?)""",
+                (
+                    json.dumps({"operation": "explicit_owner_clear"}),
+                    now,
+                ),
+            )
     except sqlite3.Error as exc:
         raise MemoryStoreError("Persistent memory could not be cleared safely.") from exc
     finally:
