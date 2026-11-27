@@ -167,7 +167,7 @@ def retrieve_memories(
     # Exact key matches suppress incidental partial-token matches. Also
     # retain curated aliases for other concepts in a compound question.
     if exact_matches:
-        selected = {index: item for item in exact_matches if item[0] >= threshold}
+        selected = {item[1]: item for item in exact_matches if item[0] >= threshold}
         for item in scored:
             _score, index, fact = item
             if _alias_score(message_tokens, fact.get("key", "")):
