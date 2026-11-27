@@ -4,6 +4,13 @@ import re
 DEFAULT_THRESHOLD = 2
 DEFAULT_LIMIT = 5
 
+_MEMORY_OVERVIEW_RE = re.compile(
+    r"\\b(?:what do you remember about me|what do you know about me|"
+    r"tell me what you remember|show (?:me )?(?:my )?memories|"
+    r"list (?:my )?memories|what(?:'s| is) in my memory|recall everything)\\b",
+    re.I,
+)
+
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "been", "being", "but",
     "by", "do", "does", "did", "for", "from", "had", "has", "have",
@@ -18,22 +25,28 @@ MEMORY_QUERY_ALIASES = {
     "name": ("my name", "preferred name", "what to call me"),
     "favorite_anime": (
         "favorite anime", "favourite anime", "anime i like",
-        "anime i enjoy", "anime i enjoyed", "anime i love",
-        "anime i prefer", "series i enjoy most",
+        "anime i liked", "anime i enjoy", "anime i enjoyed",
+        "anime i love", "anime i prefer", "series i enjoy most",
+        "series i liked",
     ),
     "favorite_vehicle": (
         "favorite car", "favourite car", "favorite vehicle",
-        "favourite vehicle", "vehicle i like", "car i like",
+        "favourite vehicle", "my car", "my vehicle",
+        "vehicle i like", "vehicle i liked", "vehicle i prefer",
+        "car i like", "car i liked", "car i prefer",
         "car i enjoy", "dream car", "preferred vehicle",
     ),
     "favorite_car": (
         "favorite car", "favourite car", "favorite vehicle",
-        "favourite vehicle", "vehicle i like", "car i like",
+        "favourite vehicle", "my car", "my vehicle",
+        "vehicle i like", "vehicle i liked", "vehicle i prefer",
+        "car i like", "car i liked", "car i prefer",
         "car i enjoy", "dream car",
     ),
     "field_of_study": (
         "field of study", "degree", "major", "program of study",
         "course of study", "what i study", "what degree i pursue",
+        "my degree", "my major", "what program i am in",
     ),
     "education_plan": (
         "education plan", "what i plan to study", "where i plan to study",
@@ -129,6 +142,9 @@ def retrieve_memories(
         return []
     if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
         return []
+
+    if _MEMORY_OVERVIEW_RE.search(message):
+        return [fact for fact in memories if isinstance(fact, dict)][:limit]
 
     message_tokens = _tokenize(message)
     if not message_tokens:
