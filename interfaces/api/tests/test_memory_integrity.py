@@ -391,4 +391,11 @@ def test_general_memory_question_returns_bounded_memory_overview():
 
     results = retrieve_memories("What do you remember about me?", facts)
 
-    assert results == facts[:5]
+    assert results == facts[-5:]
+
+
+
+def test_forget_does_not_claim_success_when_memory_is_disabled(monkeypatch):
+    monkeypatch.setattr(memory, "MEMORY_ENABLED", False)
+
+    assert forget("preference", "favorite_vehicle") is False
