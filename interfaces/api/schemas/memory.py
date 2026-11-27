@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class MemoryItem(BaseModel):
+    id: int | None = None
     category: str
     key: str
     value: str
