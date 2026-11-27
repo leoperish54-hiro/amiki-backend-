@@ -1,6 +1,6 @@
 from core.context import load_context
 from core.conversation_awareness import resolve_conversation_awareness
-from core.memory import get_memory
+from core.memory import MemoryStoreError, get_memory
 from core.memory_retriever import retrieve_memories
 
 
@@ -11,8 +11,16 @@ def build_context(message, conversation_id=None):
     Conversation awareness is resolved only against the selected conversation's
     bounded transcript. Long-term memories remain a separate retrieval domain.
     """
-    memories = get_memory()
-    relevant_memories = retrieve_memories(message, memories)
+    try:
+        memories = get_memory()
+    except MemoryStoreError:
+        # Keep the conversation usable while preserving the distinction
+        # between an empty store and a store that cannot be read safely.
+        relevant_memories = []
+        memory_status = "unavailable"
+    else:
+        relevant_memories = retrieve_memories(message, memories)
+        memory_status = "available"
 
     history = (
         load_context()
@@ -43,6 +51,7 @@ def build_context(message, conversation_id=None):
 
     return {
         "memories": relevant_memories,
+        "memory_status": memory_status,
         "conversation": relevant_conversation,
         "conversation_awareness": awareness,
     }
