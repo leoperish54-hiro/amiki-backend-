@@ -19,7 +19,7 @@ Each operation opens its own connection. SQLite serializes writers across proces
 
 A fact is never overwritten in place when its value changes. The previous row becomes `superseded`, receives a `valid_to` timestamp and points to the new fact through `superseded_by`. The new row becomes active with its own identifier, creation time and `valid_from` timestamp.
 
-Explicit forgetting changes the active row's status to `forgotten` and records an event; it does not physically erase history. Explicit owner-authorized clear similarly records forgotten states. The history API returns both fact versions and audit events. This history is useful for continuity and corrections, but it is not a legal-grade immutable audit log: an owner-authorized clear, database deletion or filesystem-level modification can remove it.
+Explicit forgetting changes the active row's status to `forgotten` and records an event; it does not physically erase that fact's history. Explicit owner-authorized clear is stronger: it deletes all fact versions and content-bearing events, then retains only a content-free `store_cleared` audit event. It also sanitizes the legacy JSON copy. The history API returns both fact versions and audit events. This history is useful for continuity and corrections, but it is not a legal-grade immutable audit log: an owner-authorized clear, database deletion or filesystem-level modification can remove it.
 
 ## Provenance and confidence
 

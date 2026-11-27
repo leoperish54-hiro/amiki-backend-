@@ -123,6 +123,8 @@ def test_explicit_clear_is_allowed_to_recover_a_corrupt_store(memory_file):
     memory.clear_memory()
 
     assert memory.load_memory() == {"facts": []}
+    assert memory.get_memory_history() == []
+    assert memory.get_memory_events()[0]["event_type"] == "store_cleared"
     assert json.loads(memory_file.read_text(encoding="utf-8")) == {"facts": []}
 
 
