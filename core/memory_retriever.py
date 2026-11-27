@@ -43,6 +43,14 @@ MEMORY_QUERY_ALIASES = {
         "response style", "answer style", "how i prefer answers",
         "concise explanations", "short answers", "brief explanations",
     ),
+    "dislikes_large_crowds": (
+        "large crowds", "huge crowds", "being in crowds",
+        "crowded places", "crowd preference",
+    ),
+    "interests": (
+        "things i am into", "my interests", "what i am interested in",
+        "hobbies and interests",
+    ),
 }
 
 
