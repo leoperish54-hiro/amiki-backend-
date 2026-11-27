@@ -518,3 +518,19 @@ def test_manager_does_not_claim_remember_success_when_storage_is_disabled(monkey
     monkeypatch.setattr(memory, "MEMORY_ENABLED", False)
 
     assert remember("personal_fact", "preferred_name", "Morgan") is False
+
+
+def test_chat_memory_capture_continues_when_atomic_write_fails(memory_file, monkeypatch):
+    from core.router import process_memory_candidates
+
+    def fail_replace(_source, _target):
+        raise OSError("simulated disk write failure")
+
+    monkeypatch.setattr(memory.os, "replace", fail_replace)
+
+    processed = process_memory_candidates(
+        "Please remember that my favorite car is a Supra."
+    )
+
+    assert processed == []
+    assert list(memory_file.parent.glob("persistent_memory.json.*.tmp")) == []

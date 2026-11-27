@@ -56,7 +56,7 @@ def process_memory_candidates(message, correlation_id=None):
         if decision == "remember":
             try:
                 succeeded = remember(category, key, value)
-            except MemoryStoreError:
+            except (MemoryStoreError, OSError):
                 _emit_memory_unavailable(correlation_id)
                 continue
 
@@ -78,7 +78,7 @@ def process_memory_candidates(message, correlation_id=None):
 
             try:
                 succeeded = forget(category, key)
-            except MemoryStoreError:
+            except (MemoryStoreError, OSError):
                 _emit_memory_unavailable(correlation_id)
                 continue
 
