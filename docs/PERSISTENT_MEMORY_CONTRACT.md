@@ -4,7 +4,7 @@ Personal memory is a separate subsystem from the Adaptive Learning Engine. It st
 
 ## Storage and migration
 
-SQLite is the source of truth at `memory/persistent_memory.sqlite3` (configurable through `memory.database_file`). The previous `memory/persistent_memory.json` file is imported once on first access and deliberately retained untouched as a recovery copy. A corrupt or invalid legacy file blocks automatic migration; Amiki does not silently replace it with an empty database. An explicit owner-authorized clear operation is the recovery path.
+SQLite is the source of truth at `memory/persistent_memory.sqlite3` (configurable through `memory.database_file`). The previous `memory/persistent_memory.json` file is imported once on first access and retained as a recovery copy. A corrupt or invalid legacy file blocks automatic migration; Amiki does not silently replace it with an empty database. An explicit owner-authorized clear operation is the recovery path and sanitizes the legacy copy to an empty store so deleted facts cannot reappear if the SQLite database is later recreated.
 
 The database uses:
 - SQLite WAL mode and FULL synchronous durability.
@@ -73,4 +73,4 @@ Extraction remains conservative and pattern-based. It does not store arbitrary c
 - Similarity scores and confidence values are ranking/review signals, not truth guarantees.
 - Consolidation identifies candidates; it does not autonomously resolve contradictions.
 - SQLite supports concurrent local processes on a shared filesystem. It is not a multi-device replication protocol; multiple devices need a shared transactional service or explicit synchronization design.
-- The legacy JSON file remains as a migration/recovery copy and should be backed up securely with the SQLite database.
+- The legacy JSON file remains as a migration/recovery copy until an explicit clear sanitizes it; it and the SQLite database should both be backed up securely.
