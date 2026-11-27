@@ -81,15 +81,16 @@ def _connect():
             isolation_level=None,
         )
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute(f"PRAGMA busy_timeout = {max(_BUSY_TIMEOUT_MS, 1)}")
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA synchronous = FULL")
+        with _MEMORY_LOCK:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(f"PRAGMA busy_timeout = {max(_BUSY_TIMEOUT_MS, 1)}")
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = FULL")
+            _initialize_schema(connection)
         try:
             os.chmod(path, 0o600)
         except OSError:
             pass
-        _initialize_schema(connection)
         return connection
     except (sqlite3.Error, OSError) as exc:
         raise MemoryStoreError("Persistent memory database is unavailable.") from exc
@@ -222,6 +223,13 @@ def _migrate_legacy_if_needed(connection):
     now = _now()
     metadata = {key: value for key, value in document.items() if key != "facts"}
     with _transaction(connection):
+        # Recheck after acquiring SQLite's write reservation: another process
+        # may have completed the one-time import while this process was waiting.
+        migrated = connection.execute(
+            "SELECT value FROM memory_meta WHERE key = 'legacy_json_imported'"
+        ).fetchone()
+        if migrated:
+            return
         for fact in document["facts"]:
             _validate_fact_fields(fact.get("category"), fact.get("key"), fact.get("value"))
             extra = {
