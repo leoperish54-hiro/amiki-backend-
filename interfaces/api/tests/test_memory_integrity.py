@@ -380,3 +380,15 @@ def test_compound_query_keeps_exact_and_curated_alias_matches():
         "favorite_anime",
         "field_of_study",
     ]
+
+
+
+def test_general_memory_question_returns_bounded_memory_overview():
+    facts = [
+        {"category": "personal_fact", "key": f"fact_{index}", "value": f"value_{index}"}
+        for index in range(8)
+    ]
+
+    results = retrieve_memories("What do you remember about me?", facts)
+
+    assert results == facts[:5]
