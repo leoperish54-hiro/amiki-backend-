@@ -2,6 +2,7 @@ import os
 from core.model import ask_model
 from core.request_trace import RequestTrace
 from core.context import add_message
+from core.memory import MemoryStoreError
 from core.memory_extractor import extract_memories
 from core.memory_classifier import classify_memory
 from core.memory_manager import remember
@@ -28,22 +29,38 @@ from core.conversation_contracts import ConversationInput
 from core.model_result_contracts import ModelResult
 
 
-def process_memory_candidates(message, correlation_id=None):
-    """Extract, classify, and execute valid memory operations."""
-    candidates = extract_memories(message)
+def _emit_memory_unavailable(correlation_id=None):
+    get_observability().emit({
+        "event_type": "MEMORY_STORE_UNAVAILABLE",
+        "severity": "WARNING",
+        "source": "backend",
+        "component": "memory_manager",
+        "summary": "Persistent memory was unavailable; the conversation continued without changing stored facts.",
+        "status": "unavailable",
+        "correlation_id": correlation_id,
+    })
 
+
+def process_memory_candidates(message, correlation_id=None):
+    """Extract and execute valid memory operations without taking chat offline."""
+    candidates = extract_memories(message)
     processed = []
 
     for candidate in candidates:
         classification = classify_memory(candidate)
         decision = classification.get("decision")
-
         category = candidate.get("category")
         key = candidate.get("key")
         value = candidate.get("value")
 
         if decision == "remember":
-            if remember(category, key, value):
+            try:
+                succeeded = remember(category, key, value)
+            except MemoryStoreError:
+                _emit_memory_unavailable(correlation_id)
+                continue
+
+            if succeeded:
                 processed.append(candidate)
                 get_observability().emit({
                     "event_type": "MEMORY_WRITE",
@@ -59,7 +76,13 @@ def process_memory_candidates(message, correlation_id=None):
         elif decision == "forget":
             from core.memory_manager import forget
 
-            if forget(category, key):
+            try:
+                succeeded = forget(category, key)
+            except MemoryStoreError:
+                _emit_memory_unavailable(correlation_id)
+                continue
+
+            if succeeded:
                 processed.append(candidate)
                 get_observability().emit({
                     "event_type": "MEMORY_CLEAR",

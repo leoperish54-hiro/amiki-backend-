@@ -9,7 +9,16 @@ import re
 _DEFAULT_HISTORY_LIMIT = 20
 _RESET_RE = re.compile(r"^(?:new topic\b|unrelated question\b|different topic\b|let['’]?s switch(?: to\b|\b)|switch topics?\b|change of topic\b)", re.I)
 _CONTINUE_RE = re.compile(r"^(?:continue\b|go on\b|carry on\b|keep going\b|next step\b|what['’]?s next\b|what is next\b|pick up where we left off\b|resume\b)", re.I)
-_ELLIPTICAL_RE = re.compile(r"^(?:why\??|how so\??|how come\??|what about (?:the )?(?:cost|price|that|this|it)\??|and then\??|then what\??)$", re.I)
+_ELLIPTICAL_RE = re.compile(
+    r"^(?:why\??|how so\??|how come\??|"
+    r"what about (?:the )?(?:cost|price|that|this|it)\??|"
+    r"and then\??|then what\??|"
+    r"yes|yeah|yep|yup|no|nope|okay|ok|exactly|right|correct|"
+    r"got it|understood|sure|absolutely|sounds good|that works|"
+    r"fair enough|i agree|i see|go ahead|please do|"
+    r"let['’]?s do it|what do you think)\s*[.!?]?$",
+    re.I,
+)
 _ORDINAL_RE = re.compile(r"\b(first|1st|second|2nd|third|3rd|fourth|4th)\b", re.I)
 _OPTION_RE = re.compile(r"(?m)^\s*(?:[-*•]|\d+[.)]|option\s+[1-4]\b)\s+\S", re.I)
 _REFERENCE_RE = re.compile(r"\b(?:that one|this one|that option|this option|the option|the first one|the second one|the third one|the fourth one|the first option|the second option|the third option|the fourth option|what did i say earlier|what you said earlier|earlier|it|that|this|those|these)\b", re.I)
@@ -74,6 +83,13 @@ def resolve_conversation_awareness(message, history, limit=_DEFAULT_HISTORY_LIMI
                 ]
                 tasks.append((supporting_indexes, turn_text))
         if not tasks:
+            indexes = _exchange_indexes(turns)
+            if indexes:
+                return _result(
+                    "CONTINUE",
+                    "immediate_exchange_continuation",
+                    indexes,
+                )
             return _result("INSUFFICIENT_CONTEXT", "no_recoverable_active_task")
         if len(tasks) > 1:
             supporting_indexes = [

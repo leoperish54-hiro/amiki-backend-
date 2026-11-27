@@ -9,13 +9,14 @@ def extract_memories(message):
     """
 
     memories = []
+    if not isinstance(message, str) or not message.strip():
+        return memories
     text = message.strip()
 
-    # An explicit request may wrap an otherwise recognisable fact.
-    # Do not treat future ambitions as facts merely because they mention
-    # the project; the patterns below remain deliberately narrow.
+    # Explicit remember prefixes may wrap a recognisable statement.
+    # This is deliberately not a generic "store the entire message" rule.
     text = re.sub(
-        r"^please remember that\s+",
+        r"^(?:please\s+)?remember(?:\s+that|,)?\s+",
         "",
         text,
         count=1,
@@ -254,6 +255,79 @@ def extract_memories(message):
         memories.append({
             "category": "personal_fact",
             "key": "field_of_study",
+            "value": match.group(1).strip(),
+            "operation": "remember"
+        })
+
+    # Current study status, including common conversational phrasing.
+    match = re.search(
+        r"\bI(?: am|'m|’m) studying\s+(.+?)(?:\s+at\s+.+)?[.!?]?$",
+        text,
+        re.IGNORECASE
+    )
+
+    if match:
+        memories.append({
+            "category": "personal_fact",
+            "key": "field_of_study",
+            "value": match.group(1).strip(),
+            "operation": "remember"
+        })
+
+    # A changed favorite vehicle is a current preference, not a future plan.
+    match = re.search(
+        r"\bmy (?:favorite|favourite) (?:car|vehicle) is(?: now)?\s+(.+?)(?:[.!?]|$)",
+        text,
+        re.IGNORECASE
+    )
+
+    if match:
+        memories.append({
+            "category": "preference",
+            "key": "favorite_vehicle",
+            "value": match.group(1).strip(),
+            "operation": "remember"
+        })
+
+    # Explicit response-style preferences.
+    match = re.search(
+        r"\bI prefer\s+(concise explanations|brief explanations|short answers|"
+        r"concise answers|detailed explanations)(?:[.!?]|$)",
+        text,
+        re.IGNORECASE
+    )
+
+    if match:
+        memories.append({
+            "category": "preference",
+            "key": "response_style",
+            "value": match.group(1).strip().lower(),
+            "operation": "remember"
+        })
+
+    # Clear likes/dislikes are stored as preferences, not personality diagnoses.
+    if re.search(
+        r"\bI (?:do not|don't) like (?:being in )?(?:huge|large|big) crowds\b",
+        text,
+        re.IGNORECASE
+    ):
+        memories.append({
+            "category": "preference",
+            "key": "dislikes_large_crowds",
+            "value": "dislikes large crowds",
+            "operation": "remember"
+        })
+
+    match = re.search(
+        r"\bI(?: am|'m|’m) really into\s+(.+?)(?:[.!?]|$)",
+        text,
+        re.IGNORECASE
+    )
+
+    if match:
+        memories.append({
+            "category": "preference",
+            "key": "interests",
             "value": match.group(1).strip(),
             "operation": "remember"
         })

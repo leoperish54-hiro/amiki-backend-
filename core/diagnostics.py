@@ -289,9 +289,15 @@ def _device_adapter_check() -> str:
 
 
 def _memory_check() -> str:
-    from core.memory import load_memory
+    from core.memory import MemoryStoreError, load_memory
 
-    memory = load_memory()
+    try:
+        memory = load_memory()
+    except MemoryStoreError:
+        raise DiagnosticIssue(
+            "Persistent memory is corrupted or unavailable. No data was changed."
+        ) from None
+
     if not isinstance(memory, dict):
         raise DiagnosticIssue("Persistent memory has an invalid structure.")
     facts = memory.get("facts")
