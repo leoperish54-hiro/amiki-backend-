@@ -144,7 +144,8 @@ def retrieve_memories(
         return []
 
     if _MEMORY_OVERVIEW_RE.search(message):
-        return [fact for fact in memories if isinstance(fact, dict)][:limit]
+        valid_facts = [fact for fact in memories if isinstance(fact, dict)]
+        return valid_facts[-limit:]
 
     message_tokens = _tokenize(message)
     if not message_tokens:
