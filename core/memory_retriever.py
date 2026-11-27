@@ -5,32 +5,73 @@ DEFAULT_THRESHOLD = 2
 DEFAULT_LIMIT = 5
 
 STOP_WORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "do", "does",
-    "for", "from", "how", "i", "in", "is", "it", "me", "my",
-    "of", "on", "or", "that", "the", "this", "to", "was",
-    "what", "when", "where", "which", "who", "why", "with",
-    "you", "your"
+    "a", "an", "and", "are", "as", "at", "be", "been", "being", "but",
+    "by", "do", "does", "did", "for", "from", "had", "has", "have",
+    "how", "i", "in", "is", "it", "me", "my", "of", "on", "or",
+    "that", "the", "this", "to", "was", "were", "what", "when",
+    "where", "which", "who", "why", "with", "you", "your",
+}
+
+# Small, explicit concept aliases improve paraphrase recall without requiring
+# a network model, embeddings service, or unbounded retrieval.
+MEMORY_QUERY_ALIASES = {
+    "name": ("my name", "preferred name", "what to call me"),
+    "favorite_anime": (
+        "favorite anime", "favourite anime", "anime i like",
+        "anime i enjoy", "anime i enjoyed", "anime i love",
+        "anime i prefer", "series i enjoy most",
+    ),
+    "favorite_vehicle": (
+        "favorite car", "favourite car", "favorite vehicle",
+        "favourite vehicle", "vehicle i like", "car i like",
+        "car i enjoy", "dream car", "preferred vehicle",
+    ),
+    "favorite_car": (
+        "favorite car", "favourite car", "favorite vehicle",
+        "favourite vehicle", "vehicle i like", "car i like",
+        "car i enjoy", "dream car",
+    ),
+    "field_of_study": (
+        "field of study", "degree", "major", "program of study",
+        "course of study", "what i study", "what degree i pursue",
+    ),
+    "education_plan": (
+        "education plan", "what i plan to study", "where i plan to study",
+        "university plan", "course i plan to take",
+    ),
+    "response_style": (
+        "response style", "answer style", "how i prefer answers",
+        "concise explanations", "short answers", "brief explanations",
+    ),
 }
 
 
 def _tokenize(text):
-    """Convert text into normalized word tokens."""
+    """Normalize text into case-insensitive alphanumeric tokens."""
     if not isinstance(text, str):
         return set()
 
     return {
-        token.lower()
-        for token in re.findall(r"[a-zA-Z0-9]+", text.replace("_", " "))
-        if token.lower() not in STOP_WORDS
+        token
+        for token in re.findall(r"[a-z0-9]+", text.casefold().replace("_", " "))
+        if token not in STOP_WORDS
     }
 
 
-def _score_memory(message, memory):
-    """Calculate deterministic relevance score for one memory."""
+def _alias_score(message_tokens, key):
+    aliases = MEMORY_QUERY_ALIASES.get(key, ())
+    best = 0
+    for alias in aliases:
+        alias_tokens = _tokenize(alias)
+        if alias_tokens and alias_tokens.issubset(message_tokens):
+            best = max(best, 8 + len(alias_tokens))
+    return best
+
+
+def _score_memory(message_tokens, memory):
+    """Score a fact using exact keys, curated concepts, and lexical evidence."""
     if not isinstance(memory, dict):
         return 0
-
-    message_tokens = _tokenize(message)
 
     key = memory.get("key", "")
     value = memory.get("value", "")
@@ -41,60 +82,66 @@ def _score_memory(message, memory):
     category_tokens = _tokenize(category)
 
     score = 0
-
     if key_tokens and key_tokens.issubset(message_tokens):
-        score += 5
+        score += 10
     elif key_tokens & message_tokens:
         score += 3
 
-    if value_tokens & message_tokens:
-        score += 2
+    score = max(score, _alias_score(message_tokens, key))
+
+    if value_tokens:
+        overlap = len(value_tokens & message_tokens)
+        if overlap:
+            score += min(overlap * 2, 4)
 
     if category_tokens & message_tokens:
         score += 1
 
     return score
 
-def retrieve_memories(message, memories, threshold=DEFAULT_THRESHOLD, limit=DEFAULT_LIMIT):
-    """
-    Retrieve memories relevant to a user message.
 
-    Exact key matches take priority over weaker partial-key matches.
-    Results are ranked by descending relevance score.
-    Ties preserve original memory order.
-
-    This function is read-only and never modifies the supplied memories.
+def retrieve_memories(
+    message,
+    memories,
+    threshold=DEFAULT_THRESHOLD,
+    limit=DEFAULT_LIMIT,
+):
     """
-    if not isinstance(message, str):
+    Retrieve a bounded, relevance-ranked set of long-term facts.
+
+    Exact key matches and curated natural-language aliases outrank incidental
+    token overlap. Ties preserve source order; the input is never mutated.
+    """
+    if not isinstance(message, str) or not message.strip():
+        return []
+    if not isinstance(memories, list):
+        return []
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        return []
+    if not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
         return []
 
-    if not isinstance(memories, list):
+    message_tokens = _tokenize(message)
+    if not message_tokens:
         return []
 
     scored = []
+    exact_matches = []
 
-    for index, memory in enumerate(memories):
-        score = _score_memory(message, memory)
-
+    for index, fact in enumerate(memories):
+        if not isinstance(fact, dict):
+            continue
+        key_tokens = _tokenize(fact.get("key", ""))
+        score = _score_memory(message_tokens, fact)
+        if key_tokens and key_tokens.issubset(message_tokens):
+            exact_matches.append((score, index, fact))
         if score >= threshold:
-            scored.append((score, index, memory))
+            scored.append((score, index, fact))
 
-    if not scored:
-        return []
-
-    exact_key_matches = [
-        item
-        for item in scored
-        if _tokenize(item[2].get("key", ""))
-        and _tokenize(item[2].get("key", "")).issubset(_tokenize(message))
-    ]
-
-    if exact_key_matches:
-        scored = exact_key_matches
+    # Preserve the established exact-key preference, but allow multiple
+    # exact matches when the user asks about more than one memory concept.
+    if exact_matches:
+        scored = [item for item in exact_matches if item[0] >= threshold]
 
     scored.sort(key=lambda item: (-item[0], item[1]))
-
-    return [
-        memory
-        for _, _, memory in scored[:limit]
-    ]
+    return [fact for _, _, fact in scored[:limit]]
