@@ -7,7 +7,7 @@ Personal memory is a separate subsystem from the Adaptive Learning Engine. It st
 SQLite is the source of truth at `memory/persistent_memory.sqlite3` (configurable through `memory.database_file`). The previous `memory/persistent_memory.json` file is imported once on first access and retained as a recovery copy. A corrupt or invalid legacy file blocks automatic migration; Amiki does not silently replace it with an empty database. An explicit owner-authorized clear operation is the recovery path and sanitizes the legacy copy to an empty store so deleted facts cannot reappear if the SQLite database is later recreated.
 
 The database uses:
-- SQLite WAL mode and FULL synchronous durability.
+- SQLite WAL mode, FULL synchronous durability and an explicit SQLite schema version.
 - Foreign-key enforcement and a configurable busy timeout.
 - `BEGIN IMMEDIATE` transactions for mutations and a partial unique index enforcing one active value per category/key.
 - SQLite's cross-process locking rather than a process-local file lock.
