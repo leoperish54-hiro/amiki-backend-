@@ -6,6 +6,7 @@ SQLite is the source of truth after migration.
 import json
 import os
 import sqlite3
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,10 +88,12 @@ def _connect():
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA synchronous = FULL")
             _initialize_schema(connection)
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        for private_path in (path, path + "-wal", path + "-shm"):
+            try:
+                if os.path.exists(private_path):
+                    os.chmod(private_path, 0o600)
+            except OSError:
+                pass
         return connection
     except (sqlite3.Error, OSError) as exc:
         raise MemoryStoreError("Persistent memory database is unavailable.") from exc
@@ -442,12 +445,17 @@ def get_memory(category=None, key=None, *, include_history=False):
             if missing:
                 from core.memory_embeddings import embed_text
                 vectors = []
-                for row in missing:
-                    vector = embed_text(
-                        f"{row['category']}: {row['fact_key']}. {row['value']}"
-                    )
-                    if vector is not None:
-                        vectors.append((json.dumps(vector), row["id"]))
+                try:
+                    for row in missing:
+                        vector = embed_text(
+                            f"{row['category']}: {row['fact_key']}. {row['value']}"
+                        )
+                        if vector is not None:
+                            vectors.append((json.dumps(vector), row["id"]))
+                except Exception:
+                    # Missing optional model/runtime must degrade to lexical
+                    # retrieval, never make otherwise healthy memory unreadable.
+                    vectors = []
                 if vectors:
                     with _transaction(connection):
                         connection.executemany(
@@ -550,6 +558,44 @@ def delete_memory(category, key):
         connection.close()
 
 
+
+
+def _sanitize_legacy_copy():
+    """Prevent a cleared legacy backup from resurrecting forgotten memories."""
+    target = os.path.abspath(LONG_TERM_FILE)
+    directory = os.path.dirname(target) or os.curdir
+    os.makedirs(directory, exist_ok=True)
+    descriptor = None
+    temporary = None
+    try:
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=os.path.basename(target) + ".",
+            suffix=".tmp",
+            dir=directory,
+        )
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            descriptor = None
+            json.dump({"facts": []}, file)
+            file.write("\\n")
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, target)
+        temporary = None
+    except OSError as exc:
+        raise MemoryStoreError(
+            "Memory was cleared in SQLite, but the legacy recovery copy could not be sanitized."
+        ) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary is not None:
+            try:
+                os.remove(temporary)
+            except FileNotFoundError:
+                pass
+
+
 def clear_memory():
     if not MEMORY_ENABLED:
         return
@@ -587,6 +633,7 @@ def clear_memory():
         raise MemoryStoreError("Persistent memory could not be cleared safely.") from exc
     finally:
         connection.close()
+    _sanitize_legacy_copy()
 
 
 def load_memory():
