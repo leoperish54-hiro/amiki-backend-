@@ -147,10 +147,15 @@ def retrieve_memories(
         if score >= threshold:
             scored.append((score, index, fact))
 
-    # Preserve the established exact-key preference, but allow multiple
-    # exact matches when the user asks about more than one memory concept.
+    # Exact key matches suppress incidental partial-token matches. Also
+    # retain curated aliases for other concepts in a compound question.
     if exact_matches:
-        scored = [item for item in exact_matches if item[0] >= threshold]
+        selected = {index: item for item in exact_matches if item[0] >= threshold}
+        for item in scored:
+            _score, index, fact = item
+            if _alias_score(message_tokens, fact.get("key", "")):
+                selected[index] = item
+        scored = list(selected.values())
 
     scored.sort(key=lambda item: (-item[0], item[1]))
     return [fact for _, _, fact in scored[:limit]]
