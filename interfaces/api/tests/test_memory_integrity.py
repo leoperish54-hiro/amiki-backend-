@@ -297,3 +297,67 @@ def test_retrieval_finds_interest_and_style_preferences():
 
     assert retrieve_memories("What are my interests?", facts)[0]["key"] == "interests"
     assert retrieve_memories("How do I prefer explanations?", facts)[0]["key"] == "response_style"
+
+
+
+def test_prompt_explicitly_discloses_unavailable_persistent_memory(memory_file, monkeypatch):
+    from core import prompt
+    from core.context_manager import build_context
+
+    memory_file.write_text('{"facts": "damaged"}', encoding="utf-8")
+    monkeypatch.setattr(prompt, "_active_learning_project", lambda *_args: None)
+    monkeypatch.setattr(prompt, "get_relevant_knowledge", lambda *_args: [])
+    monkeypatch.setattr(prompt, "build_self_knowledge_contract", lambda: {})
+
+    context = build_context("Hello.")
+    rendered = prompt.build_prompt("Hello.", _context=context)
+
+    assert "Persistent memory is unavailable" in rendered
+    assert "do not claim that memory is empty" in rendered
+
+
+def test_memory_api_returns_service_unavailable_for_corrupt_store(monkeypatch):
+    from fastapi import HTTPException
+    from interfaces.api.routes import memory as memory_routes
+
+    def fail_recall():
+        raise memory.MemoryStoreError("internal detail must not escape")
+
+    monkeypatch.setattr(memory_routes, "recall", fail_recall)
+
+    with pytest.raises(HTTPException) as raised:
+        memory_routes.memory_endpoint()
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail == (
+        "Persistent memory is unavailable. No data was changed."
+    )
+
+
+def test_concurrent_writes_do_not_drop_facts(memory_file):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def write_fact(index):
+        memory.add_memory("preference", f"preference_{index}", f"value_{index}")
+
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        list(executor.map(write_fact, range(18)))
+
+    facts = memory.get_memory()
+    assert len(facts) == 18
+    assert {fact["key"] for fact in facts} == {
+        f"preference_{index}" for index in range(18)
+    }
+
+
+def test_persistent_memory_file_is_created_with_restrictive_permissions(memory_file):
+    import stat
+
+    memory.add_memory("preference", "response_style", "concise answers")
+
+    assert stat.S_IMODE(memory_file.stat().st_mode) == 0o600
+
+
+def test_extractor_handles_non_string_input_safely():
+    assert extract_memories(None) == []
+    assert extract_memories(42) == []
