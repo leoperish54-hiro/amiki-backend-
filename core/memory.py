@@ -236,6 +236,17 @@ def _migrate_legacy_if_needed(connection):
             return
         for fact in document["facts"]:
             _validate_fact_fields(fact.get("category"), fact.get("key"), fact.get("value"))
+            previous = connection.execute(
+                """SELECT id,value FROM memory_facts
+                WHERE category=? AND fact_key=? AND status='active'""",
+                (fact["category"], fact["key"]),
+            ).fetchone()
+            if previous:
+                connection.execute(
+                    """UPDATE memory_facts SET status='superseded', valid_to=?,
+                    updated_at=? WHERE id=?""",
+                    (now, now, previous["id"]),
+                )
             extra = {
                 key: value for key, value in fact.items()
                 if key not in {"category", "key", "value"}
@@ -262,6 +273,11 @@ def _migrate_legacy_if_needed(connection):
                 ),
             )
             fact_id = connection.execute("SELECT last_insert_rowid()").fetchone()[0]
+            if previous:
+                connection.execute(
+                    "UPDATE memory_facts SET superseded_by=? WHERE id=?",
+                    (fact_id, previous["id"]),
+                )
             connection.execute(
                 """INSERT INTO memory_events
                 (fact_id,event_type,category,fact_key,new_value,provenance_json,occurred_at)
