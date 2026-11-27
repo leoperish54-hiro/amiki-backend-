@@ -5,9 +5,9 @@ DEFAULT_THRESHOLD = 2
 DEFAULT_LIMIT = 5
 
 _MEMORY_OVERVIEW_RE = re.compile(
-    r"\\b(?:what do you remember about me|what do you know about me|"
+    r"\b(?:what do you remember about me|what do you know about me|"
     r"tell me what you remember|show (?:me )?(?:my )?memories|"
-    r"list (?:my )?memories|what(?:'s| is) in my memory|recall everything)\\b",
+    r"list (?:my )?memories|what(?:'s| is) in my memory|recall everything)\b",
     re.I,
 )
 
