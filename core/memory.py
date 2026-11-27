@@ -596,7 +596,7 @@ def _sanitize_legacy_copy():
         with os.fdopen(descriptor, "w", encoding="utf-8") as file:
             descriptor = None
             json.dump({"facts": []}, file)
-            file.write("\\n")
+            file.write("\n")
             file.flush()
             os.fsync(file.fileno())
         os.replace(temporary, target)
