@@ -1,4 +1,4 @@
-from core.memory import add_memory, get_memory, delete_memory
+from core.memory import MEMORY_ENABLED, add_memory, get_memory, delete_memory
 
 
 PERSISTENT_CATEGORIES = {
@@ -46,6 +46,8 @@ def forget(category, key):
     Returns False for invalid category/key input. A valid request returns
     True even when no matching fact existed; storage failures propagate.
     """
+    if not MEMORY_ENABLED:
+        return False
     if not is_persistent_category(category) or not _non_empty_text(key):
         return False
 
