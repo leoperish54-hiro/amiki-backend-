@@ -66,8 +66,15 @@ def test_valid_legacy_records_and_extra_metadata_are_preserved(memory_file):
     }
     write_json(memory_file, original)
 
-    assert memory.load_memory() == original
-    assert memory.get_memory("preference", "favorite_vehicle") == original["facts"]
+    loaded = memory.load_memory()
+    assert loaded["schema_version"] == 1
+    migrated = memory.get_memory("preference", "favorite_vehicle")[0]
+    assert migrated["value"] == "coupe"
+    assert migrated["provenance"]["legacy_metadata"] == {
+        "source": "explicit_user_statement",
+        "custom_metadata": {"confidence": 1.0},
+    }
+    assert migrated["source_type"] == "legacy_import"
 
 
 def test_remember_and_forget_never_overwrite_corrupt_storage(memory_file):
@@ -93,20 +100,21 @@ def test_save_rejects_invalid_payload_without_replacing_valid_store(memory_file)
     assert memory_file.read_bytes() == before
 
 
-def test_failed_atomic_replace_preserves_previous_store(memory_file, monkeypatch):
-    original = {"facts": [{"category": "preference", "key": "vehicle", "value": "coupe"}]}
-    write_json(memory_file, original)
-    before = memory_file.read_bytes()
+def test_failed_sqlite_transaction_preserves_previous_fact(memory_file, monkeypatch):
+    memory.add_memory("preference", "vehicle", "coupe")
 
-    def fail_replace(_source, _target):
-        raise OSError("simulated replace failure")
+    from contextlib import contextmanager
 
-    monkeypatch.setattr(memory.os, "replace", fail_replace)
-    with pytest.raises(OSError):
-        memory.add_memory("preference", "favorite_anime", "Example Series")
+    @contextmanager
+    def fail_transaction(_connection):
+        raise OSError("simulated SQLite transaction failure")
+        yield
 
-    assert memory_file.read_bytes() == before
-    assert list(memory_file.parent.glob("persistent_memory.json.*.tmp")) == []
+    monkeypatch.setattr(memory, "_transaction", fail_transaction)
+    with pytest.raises(memory.MemoryStoreError):
+        memory.add_memory("preference", "vehicle", "sedan")
+
+    assert memory.get_memory("preference", "vehicle")[0]["value"] == "coupe"
 
 
 def test_explicit_clear_is_allowed_to_recover_a_corrupt_store(memory_file):
@@ -115,6 +123,7 @@ def test_explicit_clear_is_allowed_to_recover_a_corrupt_store(memory_file):
     memory.clear_memory()
 
     assert memory.load_memory() == {"facts": []}
+    assert json.loads(memory_file.read_text(encoding="utf-8")) == {"facts": []}
 
 
 def test_retrieval_understands_common_paraphrases():
@@ -234,13 +243,20 @@ def test_metadata_survives_add_and_delete_operations(memory_file):
     after_add = memory.load_memory()
     assert after_add["schema_version"] == 1
     assert after_add["owner_scope"] == "local"
-    assert after_add["facts"][0]["provenance"] == {"kind": "explicit"}
+    original_fact = next(
+        fact for fact in after_add["facts"] if fact["key"] == "favorite_vehicle"
+    )
+    assert original_fact["provenance"]["kind"] == "explicit"
 
     memory.delete_memory("preference", "response_style")
     after_delete = memory.load_memory()
     assert after_delete["schema_version"] == 1
     assert after_delete["owner_scope"] == "local"
-    assert after_delete["facts"] == original["facts"]
+    assert [(fact["key"], fact["value"]) for fact in after_delete["facts"]] == [
+        ("favorite_vehicle", "coupe")
+    ]
+    history = memory.get_memory_history("preference", "response_style")
+    assert history[0]["status"] == "forgotten"
 
 
 def test_missing_facts_field_is_not_silently_migrated(memory_file):
@@ -263,9 +279,14 @@ def test_invalid_utf8_store_is_reported_without_data_loss(memory_file):
 def test_manager_remember_update_and_forget_round_trip(memory_file):
     assert remember("preference", "favorite_vehicle", "coupe") is True
     assert remember("preference", "favorite_vehicle", "sedan") is True
-    assert memory.get_memory("preference", "favorite_vehicle") == [
-        {"category": "preference", "key": "favorite_vehicle", "value": "sedan"}
+    current = memory.get_memory("preference", "favorite_vehicle")
+    assert [(fact["category"], fact["key"], fact["value"]) for fact in current] == [
+        ("preference", "favorite_vehicle", "sedan")
     ]
+    history = memory.get_memory_history("preference", "favorite_vehicle")
+    assert [fact["value"] for fact in history] == ["sedan", "coupe"]
+    assert history[1]["status"] == "superseded"
+    assert history[1]["superseded_by"] == history[0].get("id", history[1].get("superseded_by"))
 
     assert forget("preference", "favorite_vehicle") is True
     assert memory.get_memory("preference", "favorite_vehicle") == []
@@ -355,7 +376,7 @@ def test_persistent_memory_file_is_created_with_restrictive_permissions(memory_f
 
     memory.add_memory("preference", "response_style", "concise answers")
 
-    assert stat.S_IMODE(memory_file.stat().st_mode) == 0o600
+    assert stat.S_IMODE(__import__("os").stat(memory._database_path()).st_mode) == 0o600
 
 
 def test_extractor_handles_non_string_input_safely():
@@ -489,17 +510,16 @@ def test_extractor_does_not_promote_temporary_activity_to_preference():
 def test_read_error_is_not_reported_as_empty_memory(memory_file, monkeypatch):
     import builtins
 
-    original_open = builtins.open
-
-    def fail_memory_read(path, *args, **kwargs):
-        if str(path) == str(memory_file):
-            raise PermissionError("private path must not be exposed")
-        return original_open(path, *args, **kwargs)
+    import sqlite3
 
     write_json(memory_file, {"facts": []})
-    monkeypatch.setattr(builtins, "open", fail_memory_read)
 
-    with pytest.raises(memory.MemoryStoreError, match="could not be read"):
+    def fail_database_open(*_args, **_kwargs):
+        raise sqlite3.OperationalError("private database path must not be exposed")
+
+    monkeypatch.setattr(memory.sqlite3, "connect", fail_database_open)
+
+    with pytest.raises(memory.MemoryStoreError, match="database is unavailable"):
         memory.load_memory()
 
 
@@ -509,7 +529,7 @@ def test_manager_reports_false_when_write_does_not_persist(monkeypatch):
 
     monkeypatch.setattr(memory, "MEMORY_ENABLED", True)
     monkeypatch.setattr(manager, "get_memory", lambda *_args: [])
-    monkeypatch.setattr(manager, "add_memory", lambda *_args: None)
+    monkeypatch.setattr(manager, "add_memory", lambda *_args, **_kwargs: None)
 
     assert manager.remember("personal_fact", "preferred_name", "Morgan") is False
 
@@ -523,10 +543,10 @@ def test_manager_does_not_claim_remember_success_when_storage_is_disabled(monkey
 def test_chat_memory_capture_continues_when_atomic_write_fails(memory_file, monkeypatch):
     from core.router import process_memory_candidates
 
-    def fail_replace(_source, _target):
-        raise OSError("simulated disk write failure")
+    def fail_connect():
+        raise OSError("simulated SQLite disk failure")
 
-    monkeypatch.setattr(memory.os, "replace", fail_replace)
+    monkeypatch.setattr(memory, "_connect", fail_connect)
 
     processed = process_memory_candidates(
         "Please remember that my favorite car is a Supra."

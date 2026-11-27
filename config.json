@@ -13,7 +13,15 @@
     "enabled": true,
     "file": "memory/current_session.json",
     "max_messages": 20,
-    "long_term_file": "memory/persistent_memory.json"
+    "long_term_file": "memory/persistent_memory.json",
+    "database_file": "memory/persistent_memory.sqlite3",
+    "busy_timeout_ms": 10000,
+    "embeddings": {
+      "enabled": false,
+      "provider": "fastembed",
+      "model": "BAAI/bge-small-en-v1.5",
+      "cache_dir": "memory/embedding_models"
+    }
   },
   "learning": {
     "enabled": true,

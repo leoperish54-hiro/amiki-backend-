@@ -127,6 +127,7 @@ def retrieve_memories(
     memories,
     threshold=DEFAULT_THRESHOLD,
     limit=DEFAULT_LIMIT,
+    query_embedding=None,
 ):
     """
     Retrieve a bounded, relevance-ranked set of long-term facts.
@@ -148,9 +149,19 @@ def retrieve_memories(
         return valid_facts[-limit:]
 
     message_tokens = _tokenize(message)
-    if not message_tokens:
+    if not message_tokens and query_embedding is None:
         return []
 
+    if query_embedding is None:
+        try:
+            from core.memory_embeddings import embed_text
+            query_embedding = embed_text(message)
+        except Exception:
+            # Exact and lexical retrieval remain available if the optional
+            # local model is not installed, configured, or temporarily ready.
+            query_embedding = None
+
+    from core.memory_embeddings import cosine_similarity
     scored = []
     exact_matches = []
 
@@ -159,10 +170,12 @@ def retrieve_memories(
             continue
         key_tokens = _tokenize(fact.get("key", ""))
         score = _score_memory(message_tokens, fact)
+        semantic = cosine_similarity(query_embedding, fact.get("_embedding"))
+        combined = float(score) + max(0.0, semantic) * 8.0
         if key_tokens and key_tokens.issubset(message_tokens):
-            exact_matches.append((score, index, fact))
-        if score >= threshold:
-            scored.append((score, index, fact))
+            exact_matches.append((combined, index, fact))
+        if score >= threshold or semantic >= 0.52:
+            scored.append((combined, index, fact))
 
     # Exact key matches suppress incidental partial-token matches. Also
     # retain curated aliases for other concepts in a compound question.
@@ -170,7 +183,10 @@ def retrieve_memories(
         selected = {item[1]: item for item in exact_matches if item[0] >= threshold}
         for item in scored:
             _score, index, fact = item
-            if _alias_score(message_tokens, fact.get("key", "")):
+            if (
+                _alias_score(message_tokens, fact.get("key", ""))
+                or cosine_similarity(query_embedding, fact.get("_embedding")) >= 0.52
+            ):
                 selected[index] = item
         scored = list(selected.values())
 
