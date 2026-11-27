@@ -178,6 +178,7 @@ def _row_to_fact(row):
     fact = {
         "id": row["id"],
         "category": row["category"],
+        "status": row["status"],
         "key": row["fact_key"],
         "value": row["value"],
     }
