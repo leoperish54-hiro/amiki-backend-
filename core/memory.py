@@ -273,9 +273,12 @@ def _open_store():
     try:
         _migrate_legacy_if_needed(connection)
         return connection
-    except Exception:
+    except MemoryStoreError:
         connection.close()
         raise
+    except (sqlite3.Error, OSError) as exc:
+        connection.close()
+        raise MemoryStoreError("Persistent memory could not be initialized safely.") from exc
 
 
 def _embed_text(text):
@@ -391,7 +394,7 @@ def add_memory(
                 ),
             )
         return True
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, OSError) as exc:
         raise MemoryStoreError("Persistent memory could not be updated safely.") from exc
     finally:
         connection.close()
@@ -417,7 +420,31 @@ def get_memory(category=None, key=None, *, include_history=False):
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY created_at, id"
         rows = connection.execute(query, params).fetchall()
-        return [_row_to_fact(row) for row in rows]
+        facts = [_row_to_fact(row) for row in rows]
+        # Backfill embeddings for migrated or previously captured facts only
+        # when the owner has explicitly enabled the optional local model.
+        try:
+            from core.memory_embeddings import embeddings_enabled
+            enabled = embeddings_enabled()
+        except Exception:
+            enabled = False
+        if enabled:
+            missing = [row for row in rows if not row["embedding_json"]]
+            if missing:
+                from core.memory_embeddings import embed_text
+                with _transaction(connection):
+                    for row in missing:
+                        vector = embed_text(
+                            f"{row['category']}: {row['fact_key']}. {row['value']}"
+                        )
+                        if vector is not None:
+                            connection.execute(
+                                "UPDATE memory_facts SET embedding_json=? WHERE id=?",
+                                (json.dumps(vector), row["id"]),
+                            )
+                refreshed = connection.execute(query, params).fetchall()
+                facts = [_row_to_fact(row) for row in refreshed]
+        return facts
     except sqlite3.Error as exc:
         raise MemoryStoreError("Persistent memory could not be read safely.") from exc
     finally:
@@ -513,8 +540,17 @@ def clear_memory():
     if not MEMORY_ENABLED:
         return
     now = _now()
-    connection = _open_store()
+    # Explicit owner-authorized clearing is also the documented recovery
+    # path for an unreadable legacy JSON file. Preserve that file untouched.
+    connection = _connect()
     try:
+        try:
+            _migrate_legacy_if_needed(connection)
+        except MemoryStoreError:
+            with _transaction(connection):
+                connection.execute(
+                    "INSERT OR REPLACE INTO memory_meta(key,value) VALUES('legacy_json_imported','true')"
+                )
         with _transaction(connection):
             rows = connection.execute(
                 "SELECT * FROM memory_facts WHERE status='active'"
