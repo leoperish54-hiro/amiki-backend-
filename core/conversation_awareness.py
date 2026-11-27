@@ -83,6 +83,13 @@ def resolve_conversation_awareness(message, history, limit=_DEFAULT_HISTORY_LIMI
                 ]
                 tasks.append((supporting_indexes, turn_text))
         if not tasks:
+            indexes = _exchange_indexes(turns)
+            if indexes:
+                return _result(
+                    "CONTINUE",
+                    "immediate_exchange_continuation",
+                    indexes,
+                )
             return _result("INSUFFICIENT_CONTEXT", "no_recoverable_active_task")
         if len(tasks) > 1:
             supporting_indexes = [
