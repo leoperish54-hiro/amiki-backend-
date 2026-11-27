@@ -170,6 +170,7 @@ def _json_object(value, fallback=None):
 
 def _row_to_fact(row):
     fact = {
+        "id": row["id"],
         "category": row["category"],
         "key": row["fact_key"],
         "value": row["value"],
