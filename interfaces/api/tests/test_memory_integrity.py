@@ -361,3 +361,22 @@ def test_persistent_memory_file_is_created_with_restrictive_permissions(memory_f
 def test_extractor_handles_non_string_input_safely():
     assert extract_memories(None) == []
     assert extract_memories(42) == []
+
+
+
+def test_compound_query_keeps_exact_and_curated_alias_matches():
+    facts = [
+        {"category": "preference", "key": "favorite_anime", "value": "Example Series"},
+        {"category": "preference", "key": "favorite_vehicle", "value": "Example Coupe"},
+        {"category": "personal_fact", "key": "field_of_study", "value": "Software Engineering"},
+    ]
+
+    results = retrieve_memories(
+        "What is my favorite anime and what degree am I pursuing?",
+        facts,
+    )
+
+    assert [fact["key"] for fact in results] == [
+        "favorite_anime",
+        "field_of_study",
+    ]
