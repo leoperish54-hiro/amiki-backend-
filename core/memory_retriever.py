@@ -41,6 +41,7 @@ MEMORY_QUERY_ALIASES = {
     ),
     "response_style": (
         "response style", "answer style", "how i prefer answers",
+        "how i prefer explanations", "preferred explanation style",
         "concise explanations", "short answers", "brief explanations",
     ),
     "dislikes_large_crowds": (
