@@ -183,7 +183,10 @@ def retrieve_memories(
         selected = {item[1]: item for item in exact_matches if item[0] >= threshold}
         for item in scored:
             _score, index, fact = item
-            if _alias_score(message_tokens, fact.get("key", "")):
+            if (
+                _alias_score(message_tokens, fact.get("key", ""))
+                or cosine_similarity(query_embedding, fact.get("_embedding")) >= 0.52
+            ):
                 selected[index] = item
         scored = list(selected.values())
 
