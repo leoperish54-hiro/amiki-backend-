@@ -46,3 +46,4 @@ jobs:
           interfaces/api/tests/test_system_state.py
           interfaces/api/tests/test_wake_word_model_bridge.py
           interfaces/api/tests/test_memory_integrity.py
+          interfaces/api/tests/test_conversation_continuity.py
