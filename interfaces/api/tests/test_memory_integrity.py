@@ -399,3 +399,15 @@ def test_forget_does_not_claim_success_when_memory_is_disabled(monkeypatch):
     monkeypatch.setattr(memory, "MEMORY_ENABLED", False)
 
     assert forget("preference", "favorite_vehicle") is False
+
+
+
+def test_exact_memory_key_suppresses_weaker_partial_matches():
+    facts = [
+        {"category": "preference", "key": "favorite_anime", "value": "Example Series"},
+        {"category": "preference", "key": "favorite_car", "value": "Example Coupe"},
+    ]
+
+    results = retrieve_memories("What is my favorite anime?", facts)
+
+    assert [fact["key"] for fact in results] == ["favorite_anime"]
