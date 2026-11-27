@@ -171,6 +171,7 @@ def test_consolidation_reports_duplicates_conflicts_and_related_facts():
         {"category": "preference", "key": "favorite_vehicle", "value": "sports car", "_embedding": [1.0, 0.0]},
         {"category": "preference", "key": "favorite_vehicle", "value": "sedan", "_embedding": [0.99, 0.01]},
         {"category": "preference", "key": "dream_car", "value": "sports car", "_embedding": [0.99, 0.01]},
+        {"category": "project_fact", "key": "related_interest", "value": "automotive engineering", "_embedding": [0.80, 0.60]},
         {"category": "project_fact", "key": "unrelated_project", "value": "build a compiler", "_embedding": [0.0, 1.0]},
     ]
 
