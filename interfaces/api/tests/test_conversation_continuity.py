@@ -79,3 +79,11 @@ def test_context_manager_does_not_leak_previous_exchange_after_topic_switch(monk
 
     assert context["conversation"] == []
     assert context["conversation_awareness"]["outcome"] == "NEW_TOPIC"
+
+
+
+def test_continue_falls_back_to_the_latest_exchange_when_no_task_label_matches():
+    result = resolve_conversation_awareness("Continue", RECENT_EXCHANGE)
+
+    assert result["outcome"] == "CONTINUE"
+    assert result["supporting_turn_indexes"] == [0, 1]
