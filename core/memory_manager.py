@@ -1,4 +1,4 @@
-from core.memory import MEMORY_ENABLED, add_memory, get_memory, delete_memory
+from core import memory as memory_store
 
 
 PERSISTENT_CATEGORIES = {
@@ -25,17 +25,19 @@ def remember(category, key, value):
     confirms that disabled or unsuccessful persistence is never reported
     as a successful remember operation.
     """
+    if not memory_store.MEMORY_ENABLED:
+        return False
     if not is_persistent_category(category):
         return False
     if not _non_empty_text(key) or not _non_empty_text(value):
         return False
 
-    existing = get_memory(category, key)
+    existing = memory_store.get_memory(category, key)
     if any(fact.get("value") == value for fact in existing):
         return True
 
-    add_memory(category, key, value)
-    persisted = get_memory(category, key)
+    memory_store.add_memory(category, key, value)
+    persisted = memory_store.get_memory(category, key)
     return any(fact.get("value") == value for fact in persisted)
 
 
@@ -43,15 +45,16 @@ def forget(category, key):
     """
     Remove a long-term fact.
 
-    Returns False for invalid category/key input. A valid request returns
-    True even when no matching fact existed; storage failures propagate.
+    Returns False for invalid category/key input or when persistent memory
+    is disabled. A valid request returns True even when no matching fact
+    existed; storage failures propagate.
     """
-    if not MEMORY_ENABLED:
+    if not memory_store.MEMORY_ENABLED:
         return False
     if not is_persistent_category(category) or not _non_empty_text(key):
         return False
 
-    delete_memory(category, key)
+    memory_store.delete_memory(category, key)
     return True
 
 
@@ -61,7 +64,7 @@ def recall(category=None, key=None):
         return []
     if key is not None and not _non_empty_text(key):
         return []
-    return get_memory(category, key)
+    return memory_store.get_memory(category, key)
 
 
 def should_remember(category):
