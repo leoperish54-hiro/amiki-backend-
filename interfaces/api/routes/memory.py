@@ -55,7 +55,9 @@ def memory_history_endpoint(category: str | None = None, key: str | None = None,
             history=get_memory_history(category=category, key=key, limit=limit),
             events=get_memory_events(category=category, key=key, limit=limit),
         )
-    except (MemoryStoreError, ValueError):
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except MemoryStoreError:
         raise HTTPException(
             status_code=503,
             detail="Persistent memory history is unavailable.",
