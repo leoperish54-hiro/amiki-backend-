@@ -1,6 +1,6 @@
 from core.context import load_context
 from core.conversation_awareness import resolve_conversation_awareness
-from core.memory import MemoryStoreError, get_memory
+from core.memory import MEMORY_ENABLED, MemoryStoreError, get_memory
 from core.memory_retriever import retrieve_memories
 
 
@@ -20,7 +20,7 @@ def build_context(message, conversation_id=None):
         memory_status = "unavailable"
     else:
         relevant_memories = retrieve_memories(message, memories)
-        memory_status = "available"
+        memory_status = "available" if MEMORY_ENABLED else "disabled"
 
     history = (
         load_context()
