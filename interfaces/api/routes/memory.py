@@ -38,7 +38,13 @@ def clear_current_session_endpoint():
 @router.delete("/memory/persistent", dependencies=[Depends(require_uosa_scope("memory.persistent.clear"))])
 def clear_persistent_memory_endpoint():
     """Clear all persistent long-term memory facts."""
-    clear_memory()
+    try:
+        clear_memory()
+    except MemoryStoreError:
+        raise HTTPException(
+            status_code=503,
+            detail="Persistent memory could not be safely cleared.",
+        ) from None
     return {"status": "cleared", "target": "persistent_memory"}
 
 

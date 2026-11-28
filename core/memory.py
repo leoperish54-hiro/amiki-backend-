@@ -684,9 +684,20 @@ def load_memory():
 
 
 def save_memory(document):
+    """Replace the active memory snapshot while preserving temporal history."""
     if not MEMORY_ENABLED:
         return
     _validate_memory(document)
+
+    desired = {}
+    for fact in document["facts"]:
+        _validate_fact_fields(fact["category"], fact["key"], fact["value"])
+        identity = (fact["category"], fact["key"])
+        if identity in desired:
+            raise ValueError("Memory snapshot contains duplicate category/key pairs.")
+        desired[identity] = fact
+
+    metadata = {key: value for key, value in document.items() if key != "facts"}
     connection = _open_store()
     now = _now()
     try:
@@ -694,32 +705,109 @@ def save_memory(document):
             rows = connection.execute(
                 "SELECT * FROM memory_facts WHERE status='active'"
             ).fetchall()
-            for row in rows:
-                connection.execute(
-                    "UPDATE memory_facts SET status='superseded', valid_to=?, updated_at=? WHERE id=?",
-                    (now, now, row["id"]),
-                )
-            for fact in document["facts"]:
-                _validate_fact_fields(fact["category"], fact["key"], fact["value"])
+            existing = {
+                (row["category"], row["fact_key"]): row
+                for row in rows
+            }
+
+            for identity, fact in desired.items():
+                previous = existing.pop(identity, None)
+                if previous is not None and previous["value"] == fact["value"]:
+                    # Preserve the existing row and its evidence when the
+                    # compatibility snapshot contains no actual fact change.
+                    continue
+
                 provenance = fact.get("provenance", {})
+                if not isinstance(provenance, dict):
+                    provenance = {}
                 confidence = fact.get("confidence", 0.75)
                 if not isinstance(confidence, (int, float)) or isinstance(confidence, bool):
                     confidence = 0.75
+                confidence = min(max(float(confidence), 0.0), 1.0)
+                source_type = fact.get("source_type", "imported")
+                if not isinstance(source_type, str) or not source_type.strip():
+                    source_type = "imported"
+                extraction_method = fact.get("extraction_method", "save_memory")
+                if not isinstance(extraction_method, str) or not extraction_method.strip():
+                    extraction_method = "save_memory"
+
+                if previous is not None:
+                    connection.execute(
+                        """UPDATE memory_facts
+                        SET status='superseded', valid_to=?, updated_at=?
+                        WHERE id=?""",
+                        (now, now, previous["id"]),
+                    )
+
                 connection.execute(
                     """INSERT INTO memory_facts
                     (category,fact_key,value,status,confidence,provenance_json,
                      source_type,extraction_method,created_at,updated_at,valid_from)
                     VALUES (?,?,?,'active',?,?,?,?,?,?,?)""",
                     (
-                        fact["category"], fact["key"], fact["value"],
-                        min(max(float(confidence), 0.0), 1.0),
+                        fact["category"], fact["key"], fact["value"], confidence,
                         json.dumps(provenance, ensure_ascii=False),
-                        fact.get("source_type", "imported"),
-                        fact.get("extraction_method", "save_memory"),
-                        now, now, now,
+                        source_type, extraction_method, now, now, now,
                     ),
                 )
-    except sqlite3.Error as exc:
+                new_id = connection.execute(
+                    "SELECT last_insert_rowid()"
+                ).fetchone()[0]
+
+                if previous is not None:
+                    connection.execute(
+                        "UPDATE memory_facts SET superseded_by=? WHERE id=?",
+                        (new_id, previous["id"]),
+                    )
+
+                connection.execute(
+                    """INSERT INTO memory_events
+                    (fact_id,event_type,category,fact_key,old_value,new_value,
+                     provenance_json,occurred_at)
+                    VALUES (?,?,?,?,?,?,?,?)""",
+                    (
+                        new_id,
+                        "superseded" if previous is not None else "created",
+                        fact["category"],
+                        fact["key"],
+                        previous["value"] if previous is not None else None,
+                        fact["value"],
+                        json.dumps(provenance, ensure_ascii=False),
+                        now,
+                    ),
+                )
+
+            # A snapshot omission means the fact is no longer active. Keep
+            # that transition auditable instead of silently dropping history.
+            for (category, key), previous in existing.items():
+                connection.execute(
+                    """UPDATE memory_facts
+                    SET status='forgotten', valid_to=?, updated_at=?
+                    WHERE id=?""",
+                    (now, now, previous["id"]),
+                )
+                connection.execute(
+                    """INSERT INTO memory_events
+                    (fact_id,event_type,category,fact_key,old_value,
+                     provenance_json,occurred_at)
+                    VALUES (?,'forgotten',?,?,?,?,?)""",
+                    (
+                        previous["id"], category, key, previous["value"],
+                        previous["provenance_json"], now,
+                    ),
+                )
+
+            if metadata:
+                connection.execute(
+                    """INSERT OR REPLACE INTO memory_meta(key,value)
+                    VALUES('legacy_document_metadata',?)""",
+                    (json.dumps(metadata, ensure_ascii=False),),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM memory_meta WHERE key='legacy_document_metadata'"
+                )
+    except (sqlite3.Error, OSError, TypeError) as exc:
         raise MemoryStoreError("Persistent memory could not be saved safely.") from exc
     finally:
         connection.close()
