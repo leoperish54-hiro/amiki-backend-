@@ -31,7 +31,7 @@ Each fact stores:
 
 The conversation extractor currently marks captured user statements as pattern-extracted conversation evidence with a default confidence of 0.90. This is a heuristic, not a calibrated probability. Repeated confirmation adds a reinforcement event and evidence entry, and can raise the stored confidence. Legacy imports are marked as such and receive a conservative default confidence.
 
-The original source text is retained to support review. Do not place credentials, secrets or unrelated sensitive content in provenance. Runtime memory databases and model caches must not be committed to the repository.
+The chat capture path stores the extracted fact, source type and extraction method; it does not duplicate the full raw user message into provenance. Optional source text is reserved for narrowly scoped evidence supplied by trusted callers. Never place credentials, secrets or unrelated sensitive content in provenance. Runtime memory databases and model caches must not be committed to the repository.
 
 ## Semantic retrieval
 
