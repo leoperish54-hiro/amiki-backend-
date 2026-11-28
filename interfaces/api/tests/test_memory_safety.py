@@ -104,3 +104,34 @@ def test_persistent_clear_endpoint_returns_503_on_storage_failure(monkeypatch):
     assert raised.value.status_code == 503
     assert raised.value.detail == "Persistent memory could not be safely cleared."
     assert "private storage detail" not in raised.value.detail
+
+
+def test_chat_memory_capture_does_not_persist_the_entire_user_message(monkeypatch):
+    from core import router
+
+    captured = []
+
+    class Observer:
+        def emit(self, _event):
+            return None
+
+    def capture_remember(*args, **kwargs):
+        captured.append((args, kwargs))
+        return True
+
+    monkeypatch.setattr(router, "remember", capture_remember)
+    monkeypatch.setattr(router, "get_observability", lambda: Observer())
+
+    message = (
+        "Please remember that my favorite car is a Supra. "
+        "My password is swordfish."
+    )
+    processed = router.process_memory_candidates(message)
+
+    assert len(processed) == 1
+    assert len(captured) == 1
+    args, kwargs = captured[0]
+    assert args == ("preference", "favorite_vehicle", "a Supra")
+    assert "source_text" not in kwargs
+    assert "swordfish" not in repr(kwargs)
+    assert message not in repr(kwargs)
