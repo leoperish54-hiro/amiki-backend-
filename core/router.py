@@ -64,7 +64,6 @@ def process_memory_candidates(message, correlation_id=None):
                         "capture_mode": "explicit_pattern_extraction",
                     },
                     confidence=0.90,
-                    source_text=message,
                     source_type="user_conversation",
                     extraction_method="pattern",
                     correlation_id=correlation_id,
